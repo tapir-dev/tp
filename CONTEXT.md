@@ -10,12 +10,21 @@ data rather than code.
 
 **Asset**:
 A unit of data the product resolves at runtime rather than compiles in: a theme,
-a prompt, a doc, a skill.
+a command, a doc, a skill. These four are the asset kinds, and they are the only
+ones.
+_Avoid_: prompt — it names no kind; see Built-in prompt
 
 **Built-in asset**:
 An asset that ships as part of the product itself, carried by the binary.
 _Avoid_: bundled asset — the brief's term, ambiguous between the content and the
 directory it might live in
+
+**Built-in prompt**:
+The system prompt the product embeds. It is a doc, not a kind of its own: one
+file, addressed by its path, carrying no asset identity and so with nothing it
+could collide with. The user replaces it through configuration; a project never
+does.
+_Avoid_: prompt asset, default prompt, base prompt
 
 **Asset root**:
 A directory whose files overlay built-in assets of the same name.
@@ -24,8 +33,25 @@ _Avoid_: bundled asset directory, asset dir
 **Scope ladder**:
 The product-wide ordering of the sources an asset may come from, from built-in
 at the bottom to a command-line flag at the top. One ladder governs every asset
-kind.
+kind. A rung may be **vacuous** for a given kind — the built-in overlay rung has
+nothing to overlay where the product ships no built-in of that kind — and a
+vacuous rung is not a second ladder.
 _Avoid_: lookup order, precedence chain, search path
+
+**Asset identity**:
+The value an Asset of a given kind collides by: a Skill's Skill root name, a
+command's filename, a theme's declared name. What plays this role is the kind's
+to say, so it is not always the `name` an asset declares — where a kind has both,
+the declared name may be only a display label.
+_Avoid_: asset name (ambiguous between the two), key
+
+**Asset record**:
+What the product can say about one Asset identity within one kind: which rung of
+the Scope ladder won it, where that file is, and what it shadowed below. It is
+derived by walking the ladder, never stored, so it describes the invocation that
+asked rather than a past one.
+_Avoid_: asset provenance (Provenance is a property of a config value), manifest,
+asset index
 
 ### Identity
 
@@ -82,8 +108,9 @@ a monorepo's root visible from a package inside it.
 _Avoid_: upward search, parent traversal
 
 **Shadowing**:
-What happens when two Skills share an identity: the one found first in traversal
-order wins and the other is not loaded. Always warned about, never silent.
+What happens when two Assets of one kind share an Asset identity: the higher rung
+of the Scope ladder wins and the other is not loaded. Always warned about, never
+silent. One ladder governs every kind, so this is one rule, not a Skills rule.
 _Avoid_: overriding, collision (a collision is the condition; shadowing is the
 resolution)
 
@@ -166,6 +193,57 @@ scrolling and search preserved.
 **Fullscreen mode**:
 The alternate-screen mode: fixed dock, scrolling transcript region, mouse
 capture.
+
+### Theming
+
+**Theme**:
+The asset that gives every theme role a colour. It shadows whole file by whole
+file rather than merging, so a theme is a complete statement of an appearance,
+never a patch on another one.
+_Avoid_: colour scheme, palette, skin
+
+**Root role**:
+One of the seven theme roles a theme file must spell — `text`, `background`,
+`accent`, `muted`, `success`, `warning`, `error`. Every other role reaches one of
+them, which is what makes the seven the stability contract of the file format.
+_Avoid_: base colour, primary role, default role
+
+**Fallback chain**:
+The walk from a theme role to its root role. A role names exactly one parent, by
+name, as a string, so the chain is a property of the taxonomy rather than a list
+each role carries.
+_Avoid_: resolution ladder (taken by `auto` defaults), inheritance, cascade
+
+**Decoration role**:
+A theme role a decoration may carry — the selection, search match and current
+search match backgrounds. It is the only kind of role obliged to declare a mono
+attribute, because a decoration that cannot be told apart is not one.
+_Avoid_: highlight role, overlay colour
+
+**Mono attribute**:
+The text attribute a theme role falls to when the colour depth is none. It
+replaces the colour rather than accompanying it, and it is the only part of a
+theme that survives `NO_COLOR`.
+_Avoid_: text style, monochrome fallback, attribute fallback
+
+**Colour alias**:
+A name a theme binds to a literal colour, so one value can be written once and
+referenced by several roles. An alias resolves to a colour and never to another
+alias.
+_Avoid_: variable, var, token
+
+**Active theme**:
+The one theme every theme role is resolved against for a frame. Exactly one is
+active at a time, chosen by name from the assets the scope ladder discovered, so
+selecting a theme and discovering one are separate acts.
+_Avoid_: current theme, selected theme, theme setting
+
+**Terminal appearance**:
+Whether the terminal `tp` is writing to is light or dark, held apart from
+everything else known about that terminal because it changes on the terminal's
+own schedule rather than on any of ours. It is not a capability: it says how the
+far end looks, not what it can express, and only theme resolution consults it.
+_Avoid_: colour scheme, dark mode, background, terminal theme
 
 ### Providers
 
@@ -294,6 +372,26 @@ list of rate sets keyed on a minimum input-token count; the highest whose
 threshold the request's input meets wins.
 _Avoid_: pricing tier — names the threshold, not the thing selected
 
+**Cell**:
+One named field of a model entry, and the unit its composition resolves. Cells
+are settled independently of one another, so an entry is almost never wholly
+the work of one contributor: two contributors can each win a different cell of
+the same entry.
+_Avoid_: field, key — both suggest the entry is settled whole, and *key* also
+collides with a config key
+
+**Origin**:
+Which position in a model entry's composition wrote the winning value of one
+cell. It spans two stacks rather than one, because a model entry is a pair: the
+quirk row composes from dialect defaults, a surface base row and patches, the
+metadata from the built-in catalog, the network cache and patches. Some origins
+are impossible in one half — the cache never writes a quirk cell — and that
+impossibility is the authority split made observable rather than asserted.
+_Avoid_: tier — the three tiers name the model source, a coarser view that
+cannot say which of two compiled artifacts wrote a cell
+_Avoid_: layer, rung — a layer composes by deep merge and a rung by shadowing,
+both over closed ladders; an origin names one winner in an open, ordered stack
+
 ### Overlays
 
 **Overlay**:
@@ -356,10 +454,11 @@ mouse hits on the rows it occupies.
 _Avoid_: modal, focusable
 
 **Transient overlay**:
-An overlay that is pure paint: it never enters the ownership stack and never
-consumes a mouse hit. This is what makes "a focused overlay retains input
-ownership across transient UI" structurally true.
-_Avoid_: toast, notification, ephemeral
+An overlay that never enters the ownership stack and never consumes a mouse hit.
+This is what makes "a focused overlay retains input ownership across transient
+UI" structurally true. Owning no input does not mean being invisible to the
+keymap: a transient overlay may still contribute an advisory context.
+_Avoid_: toast, notification, ephemeral, pure paint
 
 **Suspended**:
 The state of an ownership-stack entry that is still painted but no longer
@@ -372,10 +471,23 @@ activates. Never a mode and never a component type.
 _Avoid_: keymap, mode, scope
 
 **Context chain**:
-The ordered list a key event is resolved against — focused component, then
-owner, then `app`. First match wins; suspended and hidden entries contribute
-nothing.
+The ordered list a key event is resolved against — advisory context, then
+focused component, then owner, then `app`. First match wins; suspended and
+hidden entries contribute nothing.
 _Avoid_: keymap stack, precedence list
+
+**Advisory context**:
+A binding context contributed by an overlay that owns no input. Innermost in the
+context chain, and present only while that overlay is shown, so it shadows the
+focused component while shown and vanishes otherwise. A chain holds at most one.
+_Avoid_: layer 0, transient context, overlay context
+
+**Completion overlay**:
+The overlay listing completion candidates, anchored to the cursor marker. It
+owns no input — the editor keeps receiving printable keys, so the list keeps
+narrowing as the user types — and reaches the keymap through its advisory
+context alone.
+_Avoid_: popup, dropdown, autocomplete menu, completion widget
 
 ### Mouse
 
@@ -458,6 +570,54 @@ at all in the current terminal. Orphaning is the one condition that earns a
 message to the user; a missing capability no binding chain wanted is silence.
 _Avoid_: unbound action, broken binding
 
+**Action id**:
+The stable public name of one keystroke-invocable action, always written
+`<binding_context>.<action>` and never without its context. It is the name config,
+help text and extensions all use, which is why it outlives any key bound to it —
+and why it names nothing that is not invocable by a key: a command, a store verb
+and an action id may share a word without colliding, because none of the three
+is ever written bare.
+_Avoid_: action name, command id, binding name
+
+**Empty chain**:
+A binding chain with no keys, meaning the action is deliberately switched off.
+The opposite of orphaned rather than a degree of it: orphaning is keys that
+exist and cannot be delivered, and it speaks to the user; an empty chain is a
+choice, and it is silent.
+_Avoid_: unbound, disabled action, null binding
+
+**Opening action**:
+The action that brings an overlay into existence. It cannot live in the binding
+context it creates, so it lives in the narrowest context guaranteed live before
+its target exists, and it names the target rather than itself.
+_Avoid_: launcher, entry point, show action
+
+**Shadowed action**:
+An action whose every key is claimed by a context sitting inside it in the same
+context chain, so the inner id always wins and this one can never fire. Unlike
+orphaning it is a property of the binding set, not of the terminal, so it is a
+build assertion rather than a message to the user.
+_Avoid_: overridden action, masked binding, conflict
+
+**Disabled action**:
+An action whose binding chain is empty by deliberate choice, either in the
+shipped defaults or in the user's file. Silent, and distinct from an orphaned
+action: nothing was lost, nothing is reported.
+_Avoid_: unbound action, disabled key
+
+**Key**:
+One chord — zero or more modifiers and exactly one key name — written
+`modifier+name`. Modifiers are canonically ordered `ctrl`, `alt`, `shift`,
+`super`, and a character is named in its unshifted form with `shift` explicit,
+so that one chord has exactly one spelling. There are no chord sequences.
+_Avoid_: keystroke, shortcut, accelerator, chord sequence
+
+**Keymap preset**:
+A complete example keybindings file the user copies into their own config. Not
+a selectable mode and not a third config layer — once copied it is an ordinary
+user layer with no memory of where it came from.
+_Avoid_: profile, scheme, keymap layer
+
 ### Terminal graphics
 
 **Start-up handshake**:
@@ -472,6 +632,9 @@ could be more than one)
 The one question in the handshake that every terminal is known to answer, placed
 last so that its reply means the batch is over. It is what turns an unbounded
 wait into a bounded one: what has not arrived by then is taken as unanswered.
+Because a terminal answers in the order it was asked, this does a second job: a
+question the sentinel overtakes is one the terminal cannot answer, which tells a
+silence from a slow reply without waiting out a timeout.
 _Avoid_: terminator, guard, fence
 
 **Cell size**:
@@ -768,6 +931,13 @@ read only by yank. Distinct from the system clipboard in both directions: no
 sync, no shared machinery.
 _Avoid_: clipboard, buffer, copy history
 
+**Kill action**:
+An editor action that removes text *and* feeds the kill ring, as against a
+delete action, which removes text and feeds nothing. The distinction is carried
+in the action id itself rather than in prose, so which of the two a binding does
+is legible without reading its documentation.
+_Avoid_: cut, erase, remove
+
 ### The transcript scroll view
 
 **Follow tail**:
@@ -992,6 +1162,15 @@ than a translation table. A mirrored entry outranks the config file and is
 outranked by `--set`.
 _Avoid_: env override, env alias, TP_ variable
 
+**Standalone env entry**:
+A row in the environment registry that names a setting of its own, with no config
+key behind it. A row is standalone rather than mirrored when a key *cannot*
+exist, on either of two grounds: the value is consumed before a snapshot exists,
+or no writer of the setting can author a config file. Both grounds are
+impossibilities rather than preferences — a setting that merely happens to have
+no key yet is a mirror waiting for one.
+_Avoid_: env-only variable, unmirrored entry, plain env var
+
 **Duration key**:
 A config key whose value is a whole number of milliseconds. The unit lives in
 the type and in the doc-comment, never in the identifier — `escape_timeout`,
@@ -1015,8 +1194,36 @@ sit downstream of one scope ladder, which makes them look alike; only an asset
 axis may take a file format of its own, because that surface means the file is a
 root type generated from the same declarations as the config. `skills` is an
 asset discovery axis: a skill is an asset, but the thing being configured is the
-search for it.
+search for it. Such an axis may also name which of the assets it discovers is the
+active one, and one asset kind may have both axes — `theme` describes the file,
+`appearance` the search and the choice.
 _Avoid_: resource axis, discovery config, path axis
+
+### Command-line surface
+
+**Query verb**:
+A verb that answers a question about the product's own resolved state: pure in
+its invocation, reaching no network and mutating nothing, and answering with a
+record rather than a document. The four clauses are a test a new verb applies
+to itself, and passing is what earns it `--json`, so the flag is the predicate
+made executable rather than documented. `tp config set` fails it by mutating;
+`tp config doc` fails it by printing a page.
+_Avoid_: read command, getter, inspection command
+
+**Negative answer**:
+A query verb's report that the thing asked about resolves to nothing: an
+unknown key path, an asset identity at no rung. It is an answer, not a
+failure — it goes to stdout in the same shape a success would take and carries
+an exit code of its own, because an agent that cannot tell "no such key" from
+"you called me wrong" has to guess which one to retry.
+_Avoid_: not-found error, empty result, miss
+
+**Leaf record**:
+The unit a `tp config get` answer is made of: one config key, its resolved
+value, and its Provenance. A query for a whole table answers with several and a
+query for a single key answers with one, so the shape of the answer never
+depends on how deep the path was.
+_Avoid_: config entry, key-value pair, setting
 
 ### Tools
 
@@ -1032,3 +1239,37 @@ enables it, and disabled by default because `bash` already covers all three and
 each costs system-prompt budget. "Disabled" is one state, not two: the tool is
 absent from the draft, hence absent from the prompt and not callable.
 _Avoid_: extra tool, opt-in tool, addon
+
+### Message delivery and retry
+
+**Run-scoped lane**:
+A Delivery lane whose Delivery boundary is a state of the agent — steer and
+follow-up. It exists only for the run it was queued against and is never
+durable: once the process exits there is no "end of the current tool batch" and
+no "this agent went idle", so a pending message has not lost its queue, it has
+lost its boundary.
+_Avoid_: transient lane, volatile lane, in-flight queue
+
+**Session-scoped lane**:
+A Delivery lane whose Delivery boundary is an action of the user — next-turn
+alone. Its boundary survives a restart, so the lane is durable and is carried by
+a Session record. It survives Tree navigation for the same reason: the boundary
+is a gesture the user makes with the queue visible on screen, and every lane
+appends at whichever Leaf is current when it delivers.
+_Avoid_: persistent lane, durable queue, saved queue
+
+**Discard**:
+Emptying a Run-scoped lane without delivering it, because the run it was queued
+against ended abnormally, or emptying a Session-scoped lane because the session
+is read-only and its boundary can no longer be honoured. Returns the removed
+text to the Editor exactly as the user's own clear gesture does: a discard is a
+clear nobody asked for, so it owes the user at least as much.
+_Avoid_: drop, flush, purge — all three suggest the text is simply gone
+
+**Editor**:
+The component where the user composes a message that has not been sent. It earns
+a name because three separate mechanisms put text into it — a clear, a Discard,
+and the Confirm flow's prefill from a user message — and because the word for
+composed-but-unsent text cannot be "draft" in this product, which already means
+the tool Draft.
+_Avoid_: draft (means the tool draft), composer, input box, prompt buffer

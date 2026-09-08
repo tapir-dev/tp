@@ -1,0 +1,81 @@
+# Emacs preset — an example, copied rather than selected.
+#
+#   tp keymap export emacs > ~/.config/tp/keybindings.toml
+#
+# Scope: [editor] and [single_line_input] only. Navigation in the layer-2
+# overlays already comes from [select_list], where Emacs and the default set
+# agree (ctrl+n / ctrl+p).
+#
+# Chains replace whole, so this file states each chain in full. The Emacs key
+# leads; the default key is kept as a second live synonym where it does not
+# collide.
+#
+# Not expressible: every C-x and C-c prefixed command. The key grammar is one
+# chord per binding with no sequences, so C-x C-s has no spelling. This is the
+# same class of refusal as modal Vim — recorded rather than silently dropped.
+
+[editor]
+cursor_left          = ["ctrl+b", "left"]
+cursor_right         = ["ctrl+f", "right"]
+cursor_up            = ["ctrl+p", "up"]
+cursor_down          = ["ctrl+n", "down"]
+cursor_word_left     = ["alt+b"]
+cursor_word_right    = ["alt+f"]
+cursor_line_start    = ["ctrl+a", "home"]
+cursor_line_end      = ["ctrl+e", "end"]
+cursor_buffer_start  = ["alt+shift+comma", "ctrl+home"]
+cursor_buffer_end    = ["alt+shift+period", "ctrl+end"]
+
+select_toggle        = ["ctrl+space"]
+select_all           = ["alt+a"]
+select_clear         = ["ctrl+g"]
+
+delete_left          = ["backspace"]
+delete_right         = ["ctrl+d", "delete"]
+
+kill_word_left       = ["alt+backspace"]
+kill_word_right      = ["alt+d"]
+kill_line_end        = ["ctrl+k"]
+kill_line_start      = ["ctrl+u"]
+kill_selection       = ["ctrl+w"]
+
+yank                 = ["ctrl+y"]
+yank_pop             = ["alt+y"]
+
+clipboard_copy       = ["alt+w"]
+clipboard_cut        = ["alt+x"]
+clipboard_paste      = ["ctrl+v"]
+
+# C-/ is 0x1f under legacy encoding and is reachable.
+undo                 = ["ctrl+slash"]
+redo                 = ["alt+shift+z"]
+
+completion_open      = ["tab"]
+
+submit               = ["enter"]
+newline              = ["shift+enter", "alt+enter"]
+deliver_steer        = []
+deliver_follow_up    = []
+deliver_next_turn    = []
+
+clear                = ["ctrl+l"]
+external_editor_open = ["alt+e"]
+
+[single_line_input]
+cursor_left       = ["ctrl+b", "left"]
+cursor_right      = ["ctrl+f", "right"]
+cursor_line_start = ["ctrl+a", "home"]
+cursor_line_end   = ["ctrl+e", "end"]
+delete_left       = ["backspace"]
+delete_right      = ["ctrl+d", "delete"]
+clipboard_paste   = ["ctrl+v"]
+submit            = ["enter"]
+cancel            = []
+
+[completion]
+# The advisory context is innermost and in the chain only while the overlay is
+# shown, so C-g is keyboard-quit here and editor.select_clear everywhere else.
+# The old preset had to pick one and chose alt+g; it no longer has to.
+# accept, next and prev need no override: the defaults are already tab/enter
+# and ctrl+n/ctrl+p, which is what this preset would have asked for.
+cancel = ["esc", "ctrl+g"]

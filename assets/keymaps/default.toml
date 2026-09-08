@@ -1,0 +1,205 @@
+# tp default binding set — 103 action ids across 13 binding contexts.
+#
+# Identical on windows | wsl | unix. The only platform-conditional element in
+# v1 is the *behaviour* of app.suspend, not its chain: it is bound everywhere
+# and reports rather than acting on Windows.
+#
+# A chain is a preference order over reachability, and every reachable key in
+# it is live. Where a chain carries two keys, the second is either a legacy
+# fallback for an unreachable first key or a second live synonym.
+#
+# Banned from this file, with reasons:
+#   ctrl+shift+<letter>  byte-identical to ctrl+<letter> under legacy encoding,
+#                        so it does not merely fail — it fires the wrong action.
+#   super+<any>          no legacy encoding exists; VTE never reads the modifier.
+#   ctrl+enter           indistinguishable from enter under legacy.
+#   ctrl+tab, ctrl+shift+tab   indistinguishable from tab / shift+tab.
+#   ctrl+i, ctrl+m, ctrl+j, ctrl+[   alias tab, enter, LF, esc.
+#   ctrl+1, ctrl+9, ctrl+0, ctrl+;, ctrl+, ctrl+.   no C0 code; emit the plain char.
+#   insert family        stolen by VTE in both screens.
+#   f11, shift+f10       stolen by GNOME Terminal / VTE.
+#   alt+<digit>          stolen by GNOME Terminal (tab switching).
+#   alt+space, alt+tab   grabbed by the window manager.
+
+# ---------------------------------------------------------------- layer 0 ---
+#
+# An advisory context: contributed by an overlay that owns no input, innermost
+# in the chain, and present only while that overlay is shown. Every key here
+# shadows [editor] deliberately — legitimate because editor keeps every one of
+# them in the chains where no advisory context is present.
+#
+# Nothing is bound to a bare printable, so typing still falls through to text
+# insertion and the candidate list keeps narrowing.
+
+[completion]
+# tab both opens and accepts, and enter is a second live key, not a fallback.
+accept = ["tab", "enter"]
+# Shadows editor.cursor_down / cursor_up on purpose: "move down" is one
+# intention either way. It is also already what the Emacs preset would ask for,
+# so that preset overrides cancel alone.
+next   = ["down", "ctrl+n"]
+prev   = ["up", "ctrl+p"]
+# Shadows the app.cancel floor while shown: you cancel what is in front of you.
+# A second esc reaches the run in flight.
+cancel = ["esc"]
+
+# ---------------------------------------------------------------- layer 1 ---
+
+[editor]
+cursor_left          = ["left", "ctrl+b"]
+cursor_right         = ["right", "ctrl+f"]
+cursor_up            = ["up", "ctrl+p"]
+cursor_down          = ["down", "ctrl+n"]
+cursor_word_left     = ["alt+b", "ctrl+left"]
+cursor_word_right    = ["alt+f", "ctrl+right"]
+cursor_line_start    = ["home", "ctrl+a"]
+cursor_line_end      = ["end", "ctrl+e"]
+cursor_buffer_start  = ["ctrl+home"]
+cursor_buffer_end    = ["ctrl+end"]
+
+# ctrl+space is NUL and sound at the byte level, but ibus/fcitx commonly grab
+# it as the input-method toggle. alt+i is a second live key, not a fallback:
+# an IME grab is not observable, so a reachability fallback would never fire.
+select_toggle        = ["ctrl+space", "alt+i"]
+select_all           = ["alt+a"]
+select_clear         = ["alt+j"]
+
+delete_left          = ["backspace"]
+delete_right         = ["delete", "ctrl+d"]
+
+kill_word_left       = ["ctrl+w", "alt+backspace"]
+kill_word_right      = ["alt+d"]
+kill_line_end        = ["ctrl+k"]
+kill_line_start      = ["ctrl+u"]
+kill_selection       = ["alt+k"]
+
+yank                 = ["ctrl+y"]
+yank_pop             = ["alt+y"]
+
+clipboard_copy       = ["alt+c"]
+clipboard_cut        = ["alt+x"]
+clipboard_paste      = ["ctrl+v"]
+
+# ctrl+z is app.suspend. The editor is innermost, so binding undo there would
+# make suspend unreachable everywhere. Recorded cost, not an oversight.
+undo                 = ["alt+z"]
+redo                 = ["alt+shift+z"]
+
+# Names its target, per the rule for opening actions: editor is the narrowest
+# context guaranteed live before the completion overlay exists. The other four
+# completion ids live in [completion], which is only in the chain while the
+# overlay is shown.
+completion_open      = ["tab"]
+
+submit               = ["enter"]
+newline              = ["shift+enter", "alt+enter"]
+deliver_steer        = []
+deliver_follow_up    = []
+deliver_next_turn    = []
+
+clear                = ["ctrl+l"]
+external_editor_open = ["alt+e"]
+
+[single_line_input]
+cursor_left       = ["left", "ctrl+b"]
+cursor_right      = ["right", "ctrl+f"]
+cursor_line_start = ["home", "ctrl+a"]
+cursor_line_end   = ["end", "ctrl+e"]
+delete_left       = ["backspace"]
+delete_right      = ["delete", "ctrl+d"]
+clipboard_paste   = ["ctrl+v"]
+submit            = ["enter"]
+# Deliberate disablement. This component is layer 1 inside search, branch_summary
+# and settings; claiming esc here would shadow every layer-2 close, against the
+# rule that esc is resolved by the context chain rather than by the key.
+cancel            = []
+
+[select_list]
+next      = ["down", "ctrl+n"]
+prev      = ["up", "ctrl+p"]
+page_next = ["page_down"]
+page_prev = ["page_up"]
+first     = ["home"]
+last      = ["end"]
+accept    = ["enter"]
+
+# ---------------------------------------------------------------- layer 2 ---
+
+# transcript is the one layer-2 context that competes with the editor: it is a
+# surface root, not an overlay, so the editor stays focused inside it and wins
+# innermost. Every key here is disjoint from [editor] by construction.
+# shift+home / shift+end are stolen by VTE only on the normal screen, and this
+# context is fullscreen-only — the alternate screen — so they are delivered.
+[transcript]
+scroll_line_up    = ["ctrl+up"]
+scroll_line_down  = ["ctrl+down"]
+scroll_page_up    = ["page_up"]
+scroll_page_down  = ["page_down"]
+scroll_top        = ["shift+home"]
+scroll_bottom     = ["shift+end"]
+copy              = ["alt+w"]
+plain_text_open   = ["alt+t"]
+selection_clear   = ["alt+q"]
+search_open       = ["ctrl+s"]
+
+[search]
+next_match   = ["down", "ctrl+s"]
+prev_match   = ["up", "ctrl+r"]
+regex_toggle = ["alt+r"]
+close        = ["esc"]
+
+[sessions]
+new    = ["alt+n"]
+rename = ["alt+r"]
+close  = ["esc"]
+
+# Bare letters are free here: the browser refuses typeahead, so no key is
+# competing for text entry. fork carries no Enter-family key and its first key
+# is reachable at modified_enter = none, as the escape hatch out of a read-only
+# session requires.
+[session_tree]
+fork              = ["f"]
+fold_toggle       = ["space"]
+jump_next_segment = ["bracket_right"]
+jump_prev_segment = ["bracket_left"]
+cycle_filter      = ["tab"]
+toggle_labels     = ["l"]
+close             = ["esc"]
+
+[branch_summary]
+cancel = ["esc"]
+
+[picker]
+save_as_default = ["ctrl+s"]
+close           = ["esc"]
+
+[dialog]
+accept  = ["enter"]
+dismiss = ["esc"]
+
+# No bare printable keys: filter_focus puts a single_line_input in this
+# chain, and a bare letter would be stolen from the field the user is typing in.
+[settings]
+edit         = ["alt+e"]
+commit       = ["ctrl+s"]
+revert       = ["ctrl+r"]
+filter_focus = ["ctrl+f"]
+close        = ["esc"]
+
+# ---------------------------------------------------------------- layer 3 ---
+
+[app]
+cancel                 = ["esc", "ctrl+c"]
+quit                   = ["ctrl+q"]
+help                   = ["f1", "alt+shift+slash"]
+suspend                = ["ctrl+z"]
+reload                 = ["f5"]
+fullscreen_toggle      = ["f6"]
+settings_open          = ["ctrl+x"]
+session_tree_open      = ["ctrl+t"]
+sessions_open          = ["ctrl+o"]
+model_picker_open      = ["alt+shift+m"]
+thinking_picker_open   = ["alt+shift+t"]
+compact                = ["alt+shift+c"]
+auto_compaction_toggle = ["alt+shift+a"]
+auto_retry_toggle      = ["alt+shift+y"]
