@@ -1,4 +1,9 @@
-# A capability override lives on two surfaces
+# An environment row is a mirror or standalone
+
+> Titled "A capability override lives on two surfaces" until the second
+> amendment below, which is where the title stopped describing the document. The
+> filename keeps the original slug: closed tickets link to this file by path.
+
 
 Every terminal capability override exists twice: as a config key on the
 `terminal` axis, which is canonical, and as a **mirrored env entry** in the
@@ -127,3 +132,71 @@ would create exactly the orphan this amendment's ticket exists to close, so it
 is recorded as an open question on the map rather than answered here. Until it
 is answered, `TP_ASSET_DIR` stays standalone by default, which is what it is
 today.
+
+## Second amendment: the test has two clauses, and the first one says *consumed*
+
+The amended test above is **necessary but not sufficient**, and its single clause
+is mis-worded. Both defects surface on the same row — `TP_ASSET_DIR`, the
+variable the first amendment deliberately left open.
+
+**The first clause says *read*; it must say *consumed*.** The environment is one
+closed registry built from a derive, and the natural shape of that is a single
+construction at process start: every row is *read* at the same moment, before
+config, which run literally would make every row standalone and take
+`TP_SESSION_DIR` and the capability overrides down with it. What differs between
+rows is when the value is **needed**. The diagnostics ticket had already written
+this out by hand for `TP_LOG_LEVEL` — the level is wanted at two moments and only
+the second one has a key — and under the corrected wording that row classifies
+itself.
+
+Corrected, the clause is unchanged in every verdict it has already delivered:
+`TP_CONFIG_DIR` standalone, because the config root is needed before config is
+located; `TP_SESSION_DIR` and the capability overrides mirrors, because nothing
+wants them until the snapshot exists.
+
+**The second clause: no writer, no key.** An environment row is also standalone
+when **no writer of the setting can author a config file**. This is a different
+impossibility from timing, and the two divide the work cleanly: the first is
+about *when* the value is needed, the second about *who* writes it. They never
+shadow each other — whoever sets `TP_CONFIG_DIR` can write a config file
+perfectly well, they simply cannot be found in one.
+
+### `TP_ASSET_DIR` is standalone, on the second clause
+
+The timing clause does not reach this row in either direction, and that is a fact
+about the row rather than a gap in the test. Resolving an asset is necessarily
+post-config, because rung 5 of the scope ladder *is* config — so the ladder as a
+whole never resolves early, and "does the asset root resolve before or after the
+config load" has no answer to give.
+
+The asset root has exactly two writers: a packager patching a built-in file for
+immutable-store packaging, and someone developing `tp` itself, pointing the
+variable at the repository's asset tree to recover the authoring loop a built-in
+cannot have. Neither writes the user's config file. A packager's derivation
+cannot write into somebody else's `$XDG_CONFIG_HOME`, and the developer keeps the
+value in the shell environment, where it belongs to the checkout rather than to
+the machine.
+
+The concrete proof that no key is missing is **domination**. Everything an
+`assets.root` key could express is already expressible by the rung 5 pattern
+lists, which *outrank* rung 2 — and rung 2 also loses to rung 3, the user's own
+global asset directory. A key written by the user and deliberately beaten by two
+locations that same user controls is not a key. Worse, under "the mirror outranks
+the file", a packager's `TP_ASSET_DIR` would silently beat a user's
+`assets.root`, in the one rung whose entire purpose is to lose to the user.
+
+Rung 2 is distinct by its **writer**, not by its content. The environment is not
+a second surface for it; it is the only surface it has.
+
+### Consequences
+
+- The *"Deliberately not settled: `TP_ASSET_DIR`"* paragraph above is
+  **discharged**. The row stays standalone, which is what it already was, but now
+  on a stated ground rather than by default.
+- **There is no `assets` axis and no `assets.root` key.** This is a negative
+  declaration, not an omission: the axis was considered and refused, because it
+  would carry one key, that key is dominated at birth, and no existing axis is a
+  host for it.
+- **Passing the timing clause is not enough.** A setting wanted only after the
+  snapshot exists is a mirror *unless* nobody who sets it can write a config
+  file. Classifying a new row means running both clauses, in that order.
