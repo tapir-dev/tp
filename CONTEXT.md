@@ -533,6 +533,32 @@ context it creates, so it lives in the narrowest context guaranteed live before
 its target exists, and it names the target rather than itself.
 _Avoid_: launcher, entry point, show action
 
+**Shadowed action**:
+An action whose every key is claimed by a context sitting inside it in the same
+context chain, so the inner id always wins and this one can never fire. Unlike
+orphaning it is a property of the binding set, not of the terminal, so it is a
+build assertion rather than a message to the user.
+_Avoid_: overridden action, masked binding, conflict
+
+**Disabled action**:
+An action whose binding chain is empty by deliberate choice, either in the
+shipped defaults or in the user's file. Silent, and distinct from an orphaned
+action: nothing was lost, nothing is reported.
+_Avoid_: unbound action, disabled key
+
+**Key**:
+One chord — zero or more modifiers and exactly one key name — written
+`modifier+name`. Modifiers are canonically ordered `ctrl`, `alt`, `shift`,
+`super`, and a character is named in its unshifted form with `shift` explicit,
+so that one chord has exactly one spelling. There are no chord sequences.
+_Avoid_: keystroke, shortcut, accelerator, chord sequence
+
+**Keymap preset**:
+A complete example keybindings file the user copies into their own config. Not
+a selectable mode and not a third config layer — once copied it is an ordinary
+user layer with no memory of where it came from.
+_Avoid_: profile, scheme, keymap layer
+
 ### Terminal graphics
 
 **Start-up handshake**:
