@@ -1070,3 +1070,37 @@ enables it, and disabled by default because `bash` already covers all three and
 each costs system-prompt budget. "Disabled" is one state, not two: the tool is
 absent from the draft, hence absent from the prompt and not callable.
 _Avoid_: extra tool, opt-in tool, addon
+
+### Message delivery and retry
+
+**Run-scoped lane**:
+A Delivery lane whose Delivery boundary is a state of the agent — steer and
+follow-up. It exists only for the run it was queued against and is never
+durable: once the process exits there is no "end of the current tool batch" and
+no "this agent went idle", so a pending message has not lost its queue, it has
+lost its boundary.
+_Avoid_: transient lane, volatile lane, in-flight queue
+
+**Session-scoped lane**:
+A Delivery lane whose Delivery boundary is an action of the user — next-turn
+alone. Its boundary survives a restart, so the lane is durable and is carried by
+a Session record. It survives Tree navigation for the same reason: the boundary
+is a gesture the user makes with the queue visible on screen, and every lane
+appends at whichever Leaf is current when it delivers.
+_Avoid_: persistent lane, durable queue, saved queue
+
+**Discard**:
+Emptying a Run-scoped lane without delivering it, because the run it was queued
+against ended abnormally, or emptying a Session-scoped lane because the session
+is read-only and its boundary can no longer be honoured. Returns the removed
+text to the Editor exactly as the user's own clear gesture does: a discard is a
+clear nobody asked for, so it owes the user at least as much.
+_Avoid_: drop, flush, purge — all three suggest the text is simply gone
+
+**Editor**:
+The component where the user composes a message that has not been sent. It earns
+a name because three separate mechanisms put text into it — a clear, a Discard,
+and the Confirm flow's prefill from a user message — and because the word for
+composed-but-unsent text cannot be "draft" in this product, which already means
+the tool Draft.
+_Avoid_: draft (means the tool draft), composer, input box, prompt buffer
