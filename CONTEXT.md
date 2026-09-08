@@ -24,7 +24,9 @@ _Avoid_: bundled asset directory, asset dir
 **Scope ladder**:
 The product-wide ordering of the sources an asset may come from, from built-in
 at the bottom to a command-line flag at the top. One ladder governs every asset
-kind.
+kind. A rung may be **vacuous** for a given kind — the built-in overlay rung has
+nothing to overlay where the product ships no built-in of that kind — and a
+vacuous rung is not a second ladder.
 _Avoid_: lookup order, precedence chain, search path
 
 ### Identity
@@ -1074,6 +1076,15 @@ earns it, so the registry stays a closed set and provenance stays a fact rather
 than a translation table. A mirrored entry outranks the config file and is
 outranked by `--set`.
 _Avoid_: env override, env alias, TP_ variable
+
+**Standalone env entry**:
+A row in the environment registry that names a setting of its own, with no config
+key behind it. A row is standalone rather than mirrored when a key *cannot*
+exist, on either of two grounds: the value is consumed before a snapshot exists,
+or no writer of the setting can author a config file. Both grounds are
+impossibilities rather than preferences — a setting that merely happens to have
+no key yet is a mirror waiting for one.
+_Avoid_: env-only variable, unmirrored entry, plain env var
 
 **Duration key**:
 A config key whose value is a whole number of milliseconds. The unit lives in
