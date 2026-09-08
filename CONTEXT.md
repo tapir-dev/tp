@@ -294,6 +294,26 @@ list of rate sets keyed on a minimum input-token count; the highest whose
 threshold the request's input meets wins.
 _Avoid_: pricing tier — names the threshold, not the thing selected
 
+**Cell**:
+One named field of a model entry, and the unit its composition resolves. Cells
+are settled independently of one another, so an entry is almost never wholly
+the work of one contributor: two contributors can each win a different cell of
+the same entry.
+_Avoid_: field, key — both suggest the entry is settled whole, and *key* also
+collides with a config key
+
+**Origin**:
+Which position in a model entry's composition wrote the winning value of one
+cell. It spans two stacks rather than one, because a model entry is a pair: the
+quirk row composes from dialect defaults, a surface base row and patches, the
+metadata from the built-in catalog, the network cache and patches. Some origins
+are impossible in one half — the cache never writes a quirk cell — and that
+impossibility is the authority split made observable rather than asserted.
+_Avoid_: tier — the three tiers name the model source, a coarser view that
+cannot say which of two compiled artifacts wrote a cell
+_Avoid_: layer, rung — a layer composes by deep merge and a rung by shadowing,
+both over closed ladders; an origin names one winner in an open, ordered stack
+
 ### Overlays
 
 **Overlay**:
