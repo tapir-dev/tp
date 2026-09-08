@@ -53,9 +53,16 @@ _Avoid_: conversion, downgrade — both suggest the stored form changes
 The three-tier composition that produces a model's resolved entry: a compiled
 built-in catalog, a network-refreshed disk cache, and user-authored overrides.
 It is what hands the seam an already-resolved row; the seam never learns the
-tiers existed.
+tiers existed. The network tier *discovers* — new ids and lifecycle dates —
+far more than it enriches, because no surface publishes prices and one
+publishes no context window.
 _Avoid_: model registry — the registry is the published result, not the machinery
 _Avoid_: catalog — one tier of three
+
+**Estimated window**:
+A context window standing in for one the source never supplied, taken as the
+smallest window known for that surface. It is marked wherever it is shown,
+because it drives the compaction trigger and a wrong one truncates silently.
 
 **Model entry**:
 A model's resolved metadata paired with its quirk row, keyed on a model
