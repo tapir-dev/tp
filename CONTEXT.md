@@ -283,10 +283,25 @@ tool execution, or a summarization call. Three variants exist in the type from
 the start; v1 emits two.
 
 **Context fill**:
-How full the current context window is, derived from the last assistant
-response. Distinct from lifetime totals, and explicitly absent — not zero —
-between a compaction and the next assistant response.
+How full the current context window is: a reported base plus a delta estimate.
+Distinct from lifetime totals, and explicitly absent — not zero — between a
+compaction and the next assistant response, and before the first one.
 _Avoid_: usage, tokens used — both collide with lifetime totals
+
+**Reported base**:
+The provider's own token count for the last assistant response, normalised
+across the surfaces that exclude cached tokens from it and the ones that include
+them. Exact by construction: it already carries the system prompt, the tool
+schemas, the provider's own tool-use preamble, images and thinking — every term
+an estimate is worst at.
+_Avoid_: last usage, reported usage (that is the record; this is the figure
+taken from it)
+
+**Delta estimate**:
+The estimated token cost of the entries appended since the reported base. It is
+the only estimated term in context fill, and it is almost entirely text, which
+is where estimation is least wrong.
+_Avoid_: pending tokens, uncounted tail
 
 **Rate set**:
 A complete set of per-token prices, not a delta. A model carries an ordered
@@ -1032,3 +1047,56 @@ enables it, and disabled by default because `bash` already covers all three and
 each costs system-prompt budget. "Disabled" is one state, not two: the tool is
 absent from the draft, hence absent from the prompt and not callable.
 _Avoid_: extra tool, opt-in tool, addon
+
+### Compaction
+
+**Call group**:
+An assistant message carrying one or more tool calls, together with every tool
+result entry that answers it. The indivisible atom of the backward walk: the cut
+point falls before the group or after its last result, never inside it, because
+a request whose history opens on a result the model never called is rejected.
+_Avoid_: turn (a turn holds several), tool batch (that names concurrent
+execution, not a position in the transcript)
+
+**Cut point**:
+The boundary between entries separating the summarised span from the retained
+tail. A position, never an entry — so no entry "is" the cut point and nothing
+has to defend which one it was.
+_Avoid_: cut entry, boundary entry, split
+
+**Kept boundary**:
+The cut point of the compaction currently in force, and where the next
+compaction begins summarising. It is why repeated compaction folds surviving
+messages into the new summary instead of chaining one summary onto another.
+_Avoid_: last compaction, checkpoint (a compaction entry is the checkpoint; this
+is a position inside it)
+
+**Retained tail**:
+The entries after the cut point, materialised into the compaction entry itself.
+Everything the model still sees verbatim; everything before it survives only as
+the summary.
+_Avoid_: recent window, kept messages, keep_recent (that is the budget, not the
+result)
+
+**Summary contract**:
+The fixed section set every summary carries, in force for compaction and for
+branch summaries alike. It is a prompt contract, not a schema: the summary is
+stored as text and nothing parses it, because the only consumer is a model and a
+failed parse would abort the operation that the trigger will immediately
+re-arm.
+_Avoid_: summary schema, summary format (implies validation)
+
+**Summarisation transcript**:
+The stable labelled text the summarised span is serialised into, carried as a
+single user message in a one-off request. It is text, not messages — which is
+why no provider pairing rule reaches it, and why the call group atom applies
+there for legibility rather than for validity.
+_Avoid_: history dump, serialised context
+
+**Compaction latch**:
+The state that holds automatic compaction off until a new entry is appended.
+Failure, cancellation and a vacuous run all set it, because all three leave the
+trigger satisfied and would otherwise fire again on the next check. What clears
+it is new history, never elapsed time — nothing else changes the situation.
+_Avoid_: backoff, cooldown, debounce — all name a wait, and waiting is not what
+resolves this
