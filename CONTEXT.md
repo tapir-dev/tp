@@ -167,6 +167,44 @@ scrolling and search preserved.
 The alternate-screen mode: fixed dock, scrolling transcript region, mouse
 capture.
 
+### Theming
+
+**Theme**:
+The asset that gives every theme role a colour. It shadows whole file by whole
+file rather than merging, so a theme is a complete statement of an appearance,
+never a patch on another one.
+_Avoid_: colour scheme, palette, skin
+
+**Root role**:
+One of the seven theme roles a theme file must spell — `text`, `background`,
+`accent`, `muted`, `success`, `warning`, `error`. Every other role reaches one of
+them, which is what makes the seven the stability contract of the file format.
+_Avoid_: base colour, primary role, default role
+
+**Fallback chain**:
+The walk from a theme role to its root role. A role names exactly one parent, by
+name, as a string, so the chain is a property of the taxonomy rather than a list
+each role carries.
+_Avoid_: resolution ladder (taken by `auto` defaults), inheritance, cascade
+
+**Decoration role**:
+A theme role a decoration may carry — the selection, search match and current
+search match backgrounds. It is the only kind of role obliged to declare a mono
+attribute, because a decoration that cannot be told apart is not one.
+_Avoid_: highlight role, overlay colour
+
+**Mono attribute**:
+The text attribute a theme role falls to when the colour depth is none. It
+replaces the colour rather than accompanying it, and it is the only part of a
+theme that survives `NO_COLOR`.
+_Avoid_: text style, monochrome fallback, attribute fallback
+
+**Colour alias**:
+A name a theme binds to a literal colour, so one value can be written once and
+referenced by several roles. An alias resolves to a colour and never to another
+alias.
+_Avoid_: variable, var, token
+
 ### Providers
 
 **Surface**:
