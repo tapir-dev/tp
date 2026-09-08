@@ -1,13 +1,13 @@
 # Fork crossterm for input parsing
 
 `tp` depends on a forked `crossterm` 0.29.0, wired in through `[patch.crates-io]`,
-carrying two small parser patches. Both are upstreamable and the fork is meant to
-be deleted, not maintained.
+carrying three small parser patches. All are upstreamable and the fork is meant
+to be deleted, not maintained.
 
 ## Why
 
 `crossterm` 0.29.0 (2025-04-05) is the only published release and has been for
-seventeen months. Two defects in its input parser block us, and neither can be
+seventeen months. Three defects in its input parser block us, and none can be
 worked around from outside the crate: its reader internals are `pub(crate)`, so
 there is no seam to filter bytes before they reach the parser.
 
@@ -23,6 +23,21 @@ there is no seam to filter bytes before they reach the parser.
    It parses only the CSI-u form. Both `tmux` (>= 3.5) and `xterm` emit the xterm
    form *by default*, so this is the common case rather than a legacy corner, and
    it is exactly the encoding our middle protocol tier exists to read.
+
+3. **String sequences are not parsed at all, and their payloads are delivered as
+   keystrokes.** There is no arm for `ESC _` (APC), `ESC ]` (OSC), `ESC P` (DCS)
+   or `ESC X` / `ESC ^`, and no string-terminator handling anywhere in the
+   parser. Such a reply falls through to the Alt-prefix arm, so every byte of the
+   payload becomes a separate key event: a ten-byte graphics reply arrives as ten
+   phantom keystrokes, the first of them `Alt+_`. This does not wedge — the
+   buffer is left empty — but it injects text into whatever holds focus. An
+   unsolicited OSC colour reply triggers it without our help, and querying the
+   graphics protocol at start-up makes it self-inflicted besides.
+
+   Note the contrast that makes this the only graphics-related patch needed: the
+   reply to `CSI 16t` is discarded cleanly. It reaches the numbered-CSI arm,
+   matches no known final byte, and returns an error, which clears the buffer.
+   Numbered CSI replies are safe; string sequences are not.
 
 ## Considered options
 
@@ -41,7 +56,7 @@ there is no seam to filter bytes before they reach the parser.
 
 ## Consequences
 
-The fork is a liability with an expiry condition, so it needs an owner: both
+The fork is a liability with an expiry condition, so it needs an owner: all three
 patches go upstream as pull requests, and the day a release carries them the
 `[patch.crates-io]` stanza is deleted. Anyone bumping the dependency must check
 that first.
