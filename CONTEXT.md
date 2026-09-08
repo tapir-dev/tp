@@ -93,6 +93,68 @@ compact index, and loading a body only when that Skill is actually invoked. It
 is what keeps the prompt budget honest as a library grows.
 _Avoid_: lazy loading, on-demand loading
 
+### Commands and context files
+
+**Command**:
+A Markdown prompt template the user invokes by name, the name being its
+filename. Its body is expanded and delivered as a message; it never enters the
+system prompt, because the user chooses when it is needed and the model does not
+have to be told it exists.
+_Avoid_: slash command, prompt, macro
+
+**Argument substitution**:
+The small shell-inspired language expanded in a Command's body, and only in its
+body. Two names appear in it because two types do: `@` is the argument *word
+list*, which is what may be sliced, and `ARGUMENTS` is the *joined string*,
+which is what may take a default.
+_Avoid_: templating, interpolation, placeholders
+
+**Single pass**:
+The rule that the output of Argument substitution is text, not source: it is not
+re-scanned, for further substitution or for a file Reference. It is what stops
+an argument from becoming a capability, since otherwise an argument naming a
+file would make the agent read it.
+_Avoid_: no recursion, one-shot expansion
+
+**Context file**:
+Plain Markdown, carrying no frontmatter, loaded so that its prose reaches the
+model. Not an Asset: it composes by Accumulation rather than by Shadowing, so it
+is not on the Scope ladder.
+_Avoid_: memory, instructions file, prompt file, rules
+
+**Accumulation**:
+The third composition rule, beside the Asset's Shadowing and the Config layer's
+deep merge: every level present is included, in order, and none removes another.
+The more specific level has the last word by position, never by replacement.
+_Avoid_: merge, merge order — both already mean deep merge here
+
+**Reference**:
+An `@path` written inside a Context file, resolved against the file containing
+it, to a maximum depth of five, ignored inside a code span or fence. Eager
+relative to the file that carries it.
+_Avoid_: import, include, link
+
+**Per-directory context file**:
+A Context file that enters the conversation as an appended entry when a file
+tool resolves a path beneath it, rather than being assembled into the system
+prompt at start-up. It is the one level that is lazy, and the only one visible
+in the transcript.
+_Avoid_: nested context file, subtree context, local context
+
+**Prompt budget**:
+The ceiling on the assembled system prompt, expressed as a fraction of the
+active model's context window. It exists because the system prompt is the one
+part of a request compaction can never reclaim, so an oversized one does not
+make a session slow, it makes it impossible.
+_Avoid_: context limit, prompt size, token limit
+
+**Built-in prompt allowance**:
+The separate, absolute budget on what `tp` itself contributes — the built-in
+prompt, the tool Descriptors, and the Skill index — asserted by the build rather
+than checked at runtime. Distinct from the Prompt budget, which covers the whole
+assembly including the user's own files.
+_Avoid_: prompt budget (means the runtime ceiling), system prompt size
+
 ### Rendering
 
 **Line**:
@@ -1013,9 +1075,11 @@ An Axis whose keys govern *where* assets are searched for, as against an asset
 axis, whose own file is the asset. The distinction is easy to miss because both
 sit downstream of one scope ladder, which makes them look alike; only an asset
 axis may take a file format of its own, because that surface means the file is a
-root type generated from the same declarations as the config. `skills` is an
-asset discovery axis: a skill is an asset, but the thing being configured is the
-search for it.
+root type generated from the same declarations as the config. `skills` and
+`commands` are asset discovery axes: a skill is an asset, but the thing being
+configured is the search for it. `context` looks like a third and is not one — a
+Context file is not an Asset and is not on the Scope ladder, so nothing about
+that ladder may be assumed from the resemblance.
 _Avoid_: resource axis, discovery config, path axis
 
 ### Tools
