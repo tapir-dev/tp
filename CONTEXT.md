@@ -1032,3 +1032,48 @@ enables it, and disabled by default because `bash` already covers all three and
 each costs system-prompt budget. "Disabled" is one state, not two: the tool is
 absent from the draft, hence absent from the prompt and not callable.
 _Avoid_: extra tool, opt-in tool, addon
+
+### Message delivery and retry
+
+**Delivery lane**:
+One of the three queues a pending user message waits in — steer, follow-up, or
+next-turn — each with its own drain policy. A lane decides *when* a message is
+appended, never *where*: every lane appends at the leaf.
+_Avoid_: delivery mode, channel, queue type
+
+**Delivery boundary**:
+The instant a lane is permitted to append. Steer's is the end of the current
+tool batch, follow-up's is an idle agent, next-turn's is the next user prompt.
+_Avoid_: checkpoint, interrupt point, flush point, safe point
+
+**Chain key**:
+The tuple a run of requests must share for their prefixes to be comparable —
+session, surface, model, thinking level, and the hash of the resolved system
+prefix. Changing it starts a new chain and costs a KV cache miss; a prefix that
+diverges *within* one chain is a bug, not a cost.
+_Avoid_: cache key, prefix key, request identity
+
+**Prefix fingerprint**:
+The hash of a request's encoded prefix, produced by the encoder and carried out
+as data. It is a fact about bytes, which is why the crate that computes it is
+not the crate that compares it.
+_Avoid_: prefix hash (ambiguous with the system prefix hash inside the chain
+key), context digest
+
+**Attempt**:
+One issued provider request. The first is attempt 1, so a request that succeeds
+outright has one attempt and no retry.
+_Avoid_: try, retry (a retry is the decision to make another attempt, not the
+attempt itself)
+
+**Retry scope**:
+Which of the two independent attempt budgets an attempt is drawn from — `turn`
+or `compaction`. One policy, two counters, so a compaction that spent its
+budget does not leave the following turn with none.
+_Avoid_: retry kind, retry layer, retry class
+
+**Connect attempt**:
+A transport-level reissue of a request that failed before any HTTP status
+existed — DNS, connect, TLS handshake, or a reset before the first byte. It is
+the only reissue the transport may perform and it emits no events.
+_Avoid_: HTTP retry, transport retry, low-level retry
