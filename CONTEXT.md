@@ -205,6 +205,19 @@ referenced by several roles. An alias resolves to a colour and never to another
 alias.
 _Avoid_: variable, var, token
 
+**Active theme**:
+The one theme every theme role is resolved against for a frame. Exactly one is
+active at a time, chosen by name from the assets the scope ladder discovered, so
+selecting a theme and discovering one are separate acts.
+_Avoid_: current theme, selected theme, theme setting
+
+**Terminal appearance**:
+Whether the terminal `tp` is writing to is light or dark, held apart from
+everything else known about that terminal because it changes on the terminal's
+own schedule rather than on any of ours. It is not a capability: it says how the
+far end looks, not what it can express, and only theme resolution consults it.
+_Avoid_: colour scheme, dark mode, background, terminal theme
+
 ### Providers
 
 **Surface**:
@@ -532,6 +545,9 @@ could be more than one)
 The one question in the handshake that every terminal is known to answer, placed
 last so that its reply means the batch is over. It is what turns an unbounded
 wait into a bounded one: what has not arrived by then is taken as unanswered.
+Because a terminal answers in the order it was asked, this does a second job: a
+question the sentinel overtakes is one the terminal cannot answer, which tells a
+silence from a slow reply without waiting out a timeout.
 _Avoid_: terminator, guard, fence
 
 **Cell size**:
@@ -1082,7 +1098,9 @@ sit downstream of one scope ladder, which makes them look alike; only an asset
 axis may take a file format of its own, because that surface means the file is a
 root type generated from the same declarations as the config. `skills` is an
 asset discovery axis: a skill is an asset, but the thing being configured is the
-search for it.
+search for it. Such an axis may also name which of the assets it discovers is the
+active one, and one asset kind may have both axes — `theme` describes the file,
+`appearance` the search and the choice.
 _Avoid_: resource axis, discovery config, path axis
 
 ### Tools
