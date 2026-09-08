@@ -4,7 +4,6 @@
 > amendment below, which is where the title stopped describing the document. The
 > filename keeps the original slug: closed tickets link to this file by path.
 
-
 Every terminal capability override exists twice: as a config key on the
 `terminal` axis, which is canonical, and as a **mirrored env entry** in the
 environment registry. The resolution order is `--set`, then the mirrored env
@@ -79,13 +78,6 @@ guess must not report itself as having been asked.
   must show provenance for these keys or the ladder is unreadable from inside
   the product; that is already guaranteed, since every value in the snapshot
   carries its layer, file and span.
-
-## Note on numbering
-
-ADR numbers collide across the unmerged wayfinder branches: `0001` through
-`0004` are each claimed by more than one branch. This file takes `0005` on the
-same assumption every other branch has made — that numbers are reconciled when
-the branches land, not before.
 
 ## Amendment: the admission test was never about capabilities
 
