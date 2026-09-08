@@ -727,3 +727,60 @@ The entries between the deepest common ancestor of the old and new leaf and the
 old leaf. Empty exactly when the old leaf is an ancestor of, or equal to, the
 new one — which is when branch summarization is skipped entirely.
 _Avoid_: orphaned branch, dead branch, old path
+
+### Selection and copy
+
+**Anchor**:
+A position inside a scroll view, held as block id, line index within that block,
+and display column. Never a viewport coordinate, and never a flat index into the
+scroll view's whole line vector — both slide under content that moves.
+_Avoid_: cursor, offset, point, coordinate
+
+**Block**:
+The unit the driver assembles a scroll view's line vector from — one transcript
+entry's rendered lines. The anchoring unit, because a block's height changes
+independently of its neighbours'.
+_Avoid_: chunk, section, item, node
+
+**Selection**:
+A range between two anchors, born and dying within one press, surviving scroll
+but not a re-wrap and not a change to the block it anchors in.
+_Avoid_: highlight, marked text, region
+
+**Chrome**:
+A Span that frames content rather than being content — a border, a gutter, a
+padding run. Excluded from both copy and search, by one rule rather than two.
+_Avoid_: decoration, ornament, styling
+
+**Decoration**:
+A range plus a theme role, applied by the driver over the assembled line vector
+after the component cache and before the frame writer. Selection and search
+matches are decorations; no component learns it is decorated.
+_Avoid_: highlight, overlay, marker, annotation
+
+**Kill ring**:
+The editor's own bounded history of killed text, fed only by kill actions and
+read only by yank. Distinct from the system clipboard in both directions: no
+sync, no shared machinery.
+_Avoid_: clipboard, buffer, copy history
+
+### The transcript scroll view
+
+**Follow tail**:
+Not a mode but a predicate — the slice index sits at its maximum. New content
+moves the slice only when the predicate already held, so scrolling away and back
+detaches and reattaches without a flag to desynchronise.
+_Avoid_: auto-scroll, stick to bottom, tail mode
+
+**Scrollbar policy**:
+Whether a scroll view paints its scrollbar: always, never, or only while the
+content exceeds the viewport. It governs painting, never layout — the column is
+reserved whenever the policy is not `hidden`, so the transcript's width cannot
+oscillate.
+_Avoid_: scrollbar mode, visibility
+
+**In-transcript search**:
+The fullscreen affordance that finds and highlights text in the transcript's
+rendered lines. Distinct from session search, which searches stored sessions and
+is out of v1 scope.
+_Avoid_: search, find, filter
