@@ -1179,6 +1179,32 @@ active one, and one asset kind may have both axes — `theme` describes the file
 `appearance` the search and the choice.
 _Avoid_: resource axis, discovery config, path axis
 
+### Command-line surface
+
+**Query verb**:
+A verb that answers a question about the product's own resolved state: pure in
+its invocation, reaching no network and mutating nothing, and answering with a
+record rather than a document. The four clauses are a test a new verb applies
+to itself, and passing is what earns it `--json`, so the flag is the predicate
+made executable rather than documented. `tp config set` fails it by mutating;
+`tp config doc` fails it by printing a page.
+_Avoid_: read command, getter, inspection command
+
+**Negative answer**:
+A query verb's report that the thing asked about resolves to nothing: an
+unknown key path, an asset identity at no rung. It is an answer, not a
+failure — it goes to stdout in the same shape a success would take and carries
+an exit code of its own, because an agent that cannot tell "no such key" from
+"you called me wrong" has to guess which one to retry.
+_Avoid_: not-found error, empty result, miss
+
+**Leaf record**:
+The unit a `tp config get` answer is made of: one config key, its resolved
+value, and its Provenance. A query for a whole table answers with several and a
+query for a single key answers with one, so the shape of the answer never
+depends on how deep the path was.
+_Avoid_: config entry, key-value pair, setting
+
 ### Tools
 
 **Core tool**:
