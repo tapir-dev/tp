@@ -50,12 +50,7 @@ clipboard_paste      = ["ctrl+v"]
 undo                 = ["ctrl+slash"]
 redo                 = ["alt+shift+z"]
 
-complete_open        = ["tab"]
-complete_accept      = ["alt+l"]
-complete_next        = ["alt+n"]
-complete_prev        = ["alt+p"]
-# ctrl+g is select_clear in this preset; keyboard-quit cannot be both.
-complete_cancel      = ["alt+g"]
+completion_open      = ["tab"]
 
 submit               = ["enter"]
 newline              = ["shift+enter", "alt+enter"]
@@ -76,3 +71,11 @@ delete_right      = ["ctrl+d", "delete"]
 clipboard_paste   = ["ctrl+v"]
 submit            = ["enter"]
 cancel            = []
+
+[completion]
+# The advisory context is innermost and in the chain only while the overlay is
+# shown, so C-g is keyboard-quit here and editor.select_clear everywhere else.
+# The old preset had to pick one and chose alt+g; it no longer has to.
+# accept, next and prev need no override: the defaults are already tab/enter
+# and ctrl+n/ctrl+p, which is what this preset would have asked for.
+cancel = ["esc", "ctrl+g"]
