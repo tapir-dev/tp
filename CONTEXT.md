@@ -1008,6 +1008,16 @@ indistinguishable from one nobody thought of, and the next reader files the same
 ticket again.
 _Avoid_: non-key, rejected key, won't-configure
 
+**Asset discovery axis**:
+An Axis whose keys govern *where* assets are searched for, as against an asset
+axis, whose own file is the asset. The distinction is easy to miss because both
+sit downstream of one scope ladder, which makes them look alike; only an asset
+axis may take a file format of its own, because that surface means the file is a
+root type generated from the same declarations as the config. `skills` is an
+asset discovery axis: a skill is an asset, but the thing being configured is the
+search for it.
+_Avoid_: resource axis, discovery config, path axis
+
 ### Tools
 
 **Core tool**:
