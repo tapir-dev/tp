@@ -27,6 +27,21 @@ at the bottom to a command-line flag at the top. One ladder governs every asset
 kind.
 _Avoid_: lookup order, precedence chain, search path
 
+**Asset identity**:
+The value an Asset of a given kind collides by: a Skill's Skill root name, a
+command's filename, a theme's declared name. What plays this role is the kind's
+to say, so it is not always the `name` an asset declares — where a kind has both,
+the declared name may be only a display label.
+_Avoid_: asset name (ambiguous between the two), key
+
+**Asset record**:
+What the product can say about one Asset identity within one kind: which rung of
+the Scope ladder won it, where that file is, and what it shadowed below. It is
+derived by walking the ladder, never stored, so it describes the invocation that
+asked rather than a past one.
+_Avoid_: asset provenance (Provenance is a property of a config value), manifest,
+asset index
+
 ### Identity
 
 **Identity**:
@@ -82,8 +97,9 @@ a monorepo's root visible from a package inside it.
 _Avoid_: upward search, parent traversal
 
 **Shadowing**:
-What happens when two Skills share an identity: the one found first in traversal
-order wins and the other is not loaded. Always warned about, never silent.
+What happens when two Assets of one kind share an Asset identity: the higher rung
+of the Scope ladder wins and the other is not loaded. Always warned about, never
+silent. One ladder governs every kind, so this is one rule, not a Skills rule.
 _Avoid_: overriding, collision (a collision is the condition; shadowing is the
 resolution)
 
