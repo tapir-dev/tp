@@ -685,7 +685,21 @@ late; and `input_reply_clipboard` refuses reply payloads at or above
 5.0.2. There is no option, no interception, no reply, and no implicit passthrough.**
 
 Source-only finding — screen was not installed on the survey machine, so this is not
-empirically tested.
+empirically tested. It was, however, **independently confirmed twice from two
+different primary sources**: the Savannah git tree (`screen-v5` branch) and the GNU
+release tarball `screen-5.0.2.tar.gz` from <https://ftp.gnu.org/gnu/screen/>
+(listed `2026-07-11`, its `ChangeLog` opening `Version 5.0.2 (12/07/26):`). Both
+readings agree on every point below.
+
+Confirming grep over the 5.0.2 tarball — **VERIFIED**:
+
+```console
+$ grep -rni "clipboard" --include='*.c' --include='*.h' .
+(no matches)
+$ grep -rn "52" ansi.c
+70:  uint64_t renditions[NUM_RENDS] = ...
+1084: case 2: /* ANM:  ansi/vt52 mode */
+```
 
 **52 is not in the OSC dispatch.** **VERIFIED**, `src/ansi.c`, `StringEnd()`, branch
 `screen-v5` at `e9206ef` (Release 5.0.2, 2026-07-11):
@@ -761,7 +775,10 @@ printf '\033P\033]52;c;%s\007\033\\' "$(printf %s "$text" | base64 | tr -d '\n')
 clipboard provider. It never forwards the inner sequence verbatim — it re-emits its
 own. Reads are forwarded to the host but are default-deny.**
 
-Source: `zellij-org/zellij` at `af38660` (2026-08-31), workspace version **0.46.0**.
+Source: `zellij-org/zellij` at `af38660` (2026-08-31), workspace version **0.46.0**
+(unreleased; `CHANGELOG.md` top section is `## [Unreleased]`). The latest *release*
+is **v0.45.1, 2026-08-28**. All paths below were confirmed identical at tag
+`v0.45.1`, not only on `main`. VERIFIED.
 
 **Interception.** **VERIFIED**, `zellij-server/src/panes/grid.rs`, the OSC 52 arm of
 `Perform::osc_dispatch`:
@@ -798,6 +815,25 @@ Notes, all **VERIFIED** from this and the surrounding code:
 zellij **advertises** OSC 52 support two ways — **VERIFIED**: XTGETTCAP answers `Ms`
 with `\u{1b}]52;%p1%s;%p2%s\u{7}`, and Primary DA replies `\u{1b}[?62;4;52c` /
 `\u{1b}[?62;52c`. The latter is exactly what tmux 3.6's DA sniffing keys on.
+
+**Both claims are unconditional**, and this is a trap. **VERIFIED**, `grid.rs`
+`answer_xtgettcap()`:
+
+```rust
+Some("Ms") => format!(
+    "\u{1b}P1+r{}={}\u{1b}\\",
+    encode_hex_ascii("Ms"),
+    encode_hex_ascii("\u{1b}]52;%p1%s;%p2%s\u{7}"),
+),
+```
+
+zellij claims `Ms` support **regardless of whether the outer terminal actually
+supports OSC 52, and regardless of `copy_command`**. **INFERRED consequence:** a
+program that autodetects clipboard support from `Ms` (neovim's `clipboard=osc52`
+autodetect is the obvious case) will trust that claim inside zellij even when the
+host terminal cannot honour it — and the copy then silently vanishes. This is the
+same class of lie as st advertising `Ms` while defaulting `allowwindowops = 0`, and
+it reinforces the Q1 conclusion: **never trust `Ms` as a capability probe.**
 
 **Non-forwarding is asserted by an upstream unit test** — **VERIFIED**,
 `zellij-server/src/panes/unit/grid_tests.rs`:
@@ -865,10 +901,26 @@ if let crate::host_query::HostQuery::ClipboardContent { .. } = query {
 }
 ```
 
-When disabled the app gets **nothing** — not even the empty `OSC 52;c;` reply that a
-host timeout would synthesize. Asserted upstream by the integration test
-`a_clipboard_read_is_never_answered_when_the_option_is_off`. When enabled, clipboard
-forwards get a 35-second timeout, versus 1 second for other host queries.
+> **Two conflicts between independent readings of this same code — UNRESOLVED.**
+> Two agents surveyed this path separately and disagree on two points. Neither is
+> reported here as settled; both need a direct read of `screen.rs` and
+> `host_query.rs` before anything is built on them.
+>
+> 1. **What the pane receives when reads are disabled.** Reading A: **nothing at
+>    all**, citing the upstream integration test
+>    `a_clipboard_read_is_never_answered_when_the_option_is_off`, which asserts that
+>    neither host output nor pane stdin ever contains `\x1b]52;`. Reading B: an
+>    **empty reply** `\x1b]52;c;<terminator>`, via `host_query.rs`
+>    `empty_reply_bytes`. Both cite the same `resume_pane_after_forward(pane_id, Vec::new())`
+>    call. The named test is the stronger evidence, but the discrepancy is real.
+> 2. **The forward timeout when reads are enabled.** Reading A: **35 seconds**,
+>    citing `SERVER_CLIPBOARD_FORWARD_TIMEOUT_MS = 35_000` with a dedicated queue,
+>    versus 1000 ms for other host queries. Reading B: **500 ms**.
+>
+> For a design that must not hang, assume the **larger** figure until confirmed.
+
+When enabled, zellij re-serialises `\x1b]52;{selection};?` to the host and relays the
+answer back, pausing pane input so byte order is preserved.
 
 **No gate and no size limit on writes.** **VERIFIED** — there is no config flag,
 permission check, or byte cap on the write branch. Any program in any pane, including
@@ -1801,17 +1853,22 @@ on the pre-0.30 wayland-rs stack.
 
 ## Open items
 
-1. **GNU screen was not tested empirically** — it is not installed on the survey
-   machine, and `git.savannah.gnu.org` became unreachable partway through the
-   investigation, so the findings could not be re-verified against a fresh clone. The
-   `screen-v4` branch was never reached; the historical evidence comes from the 2012
-   `next` branch. The conclusion (no OSC 52 anywhere) is source-solid but untested.
-2. **Konsole's behaviour on a `?` read query** — inferred to clear the selection from
+1. **zellij read-path behaviour: two direct conflicts** between independent readings
+   of the same source — what the pane receives when reads are disabled (nothing vs an
+   empty reply), and the forward timeout (35 s vs 500 ms). Detailed in the zellij
+   section. Resolve by reading `zellij-server/src/screen.rs` and
+   `zellij-server/src/host_query.rs` directly before relying on either.
+2. **GNU screen was not tested empirically** — not installed on the survey machine.
+   `git.savannah.gnu.org` became unreachable partway through, so a second reading
+   used the GNU release tarball instead; the two agree. The `screen-v4` branch was
+   never reached; historical evidence comes from the 2012 `next` branch. The
+   conclusion (no OSC 52 anywhere) is source-solid but untested against a binary.
+3. **Konsole's behaviour on a `?` read query** — inferred to clear the selection from
    reading the code path; not reproduced against a running Konsole.
-3. **kitty's `no-append` token** — referenced in older material, absent from the
+4. **kitty's `no-append` token** — referenced in older material, absent from the
    current `clipboard_control` implementation. Its removal date was not established
    from a primary source.
-4. **Terminal.app** — no Apple statement either way was found; the finding rests on
+5. **Terminal.app** — no Apple statement either way was found; the finding rests on
    absence of `Ms` in a third-party terminfo description.
 
 ---
