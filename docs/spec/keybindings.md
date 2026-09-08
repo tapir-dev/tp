@@ -9,7 +9,7 @@ Non-goals:
 
 ## 1. The key vocabulary
 
-The action namespace is closed at 103 ids across 12 binding contexts. The *key*
+The action namespace is closed at 103 ids across 13 binding contexts. The *key*
 side needs the same treatment: a closed enum known at compile time.
 
 A **key** is `modifier* key_name`, joined by `+`.
@@ -39,9 +39,25 @@ bit, so `super+x` is byte-identical to `x`.
 
 Two orthogonal mechanisms, already fixed upstream:
 
-- The **context chain** decides which action id a key resolves to — focused
-  component, then owner, then `app`, first match innermost-wins.
+- The **context chain** decides which action id a key resolves to — advisory
+  context, then focused component, then owner, then `app`, first match
+  innermost-wins.
 - The **binding chain** decides which key fires an action, filtered by reachability.
+
+An **advisory context** is contributed by an overlay that owns no input. It sits
+innermost, and it is in the chain only while its overlay is **shown** — so it
+shadows the focused component while shown and vanishes otherwise. This is the
+same kind of state the driver already resolves when it puts `transcript` in the
+chain in fullscreen and leaves it out in scrollback; it is not a binding that
+depends on the previous action, which stays banned.
+
+`completion` is the only advisory context in v1, and **a chain holds at most
+one**: two would need an ordering between them, and nothing asks for a second.
+
+Because an advisory context binds no bare printable, typing still falls through
+it to the component beneath and on into text insertion — which is not a binding
+and never appears in the namespace. That fall-through is what lets the candidate
+list keep narrowing while the overlay holds `enter`, `tab`, the arrows and `esc`.
 
 **Every reachable key in a binding chain is live.** The chain is still a
 preference order — its first reachable key is what help text displays, and it is
@@ -61,16 +77,31 @@ All four are build assertions, not review items.
 
 1. **No two ids in one context share a key.** Within a context, first-match has
    nothing to disambiguate.
-2. **A layer-2 context may not reuse a key held by a layer-1 context that can
-   appear beneath it in the same chain.** The inner one wins and the outer id is
-   unreachable by construction. This is what removed `sessions.switch` and
-   `session_tree.confirm`, both shadowed by `select_list.accept` on `enter`.
+2. **No id may be shadowed in every chain it appears in.** Keys resolve
+   innermost-first, so an id whose key is claimed by a context inner to it is
+   unreachable *in that chain*; it is a defect only when no assemblable chain is
+   left in which it wins. This is what removed `sessions.switch` and
+   `session_tree.confirm` — `select_list` sits beneath both in *every* chain, so
+   `enter` never arrived. It is also what permits the sanctioned shadowing:
+   seven layer-2 `close` ids over `app.cancel` on `esc`, `single_line_input`
+   over `settings.filter_focus` on `ctrl+f` once the filter is focused, and
+   `completion` over `editor.submit` on `enter` while the overlay is shown.
+   Those inner contexts are in the chain only sometimes.
+
+   The assertion is enforced against an explicit table of **assemblable
+   chains**, which the earlier positional form approximated. The positional form
+   also never compared layer 2 against layer 3, so the seven `esc` ids passed by
+   omission rather than by rule.
+
+   **Floor clause:** reachable *somewhere* is not enough for `app`. The floor
+   exists to be live while the user is typing, so an `app` id must additionally
+   win in the base surface chain, evaluated with no advisory context present.
 3. **A context whose chain can contain a text-entry component may not bind a bare
-   printable character.** `transcript` sits over a focused `editor`; `search`,
-   `settings` and `branch_summary` can hold a focused `single_line_input`. A bare
-   `y` in `transcript` would resolve to `copy` and never reach text insertion.
-   Bare letters are available only in `session_tree`, `sessions` and `picker`,
-   whose layer 1 is `select_list` alone.
+   printable character.** A bare `y` in `transcript` would resolve to `copy` and
+   never reach text insertion. The set is **derived from the chain table**, not
+   listed by hand: `transcript`, `search`, `settings`, `branch_summary`,
+   `completion`, `dialog` and `app`. Bare letters are available only in
+   `session_tree`, `sessions` and `picker`, whose layer 1 is `select_list` alone.
 4. **`ctrl+shift+<letter>` may not appear.** Under legacy encoding it is
    byte-identical to `ctrl+<letter>`, so it does not degrade — it fires a
    different action's binding. This is stronger than the reachability filter,
@@ -140,3 +171,47 @@ and `C-c` prefixed command is unexpressible — one chord per binding, no sequen
 `ctrl+e`/`ctrl+y`/`ctrl+f`/`ctrl+b` for the transcript; `hjkl` in the editor would
 replace typing with motion, and without a normal mode there is nothing to switch
 out of. `gg`/`G`/`y` in the transcript are unavailable under invariant 3.
+
+## 7. The completion overlay
+
+The overlay owns no input: it stays `Transient`, never enters the ownership
+stack, and never suspends the editor. What it declares at open is an **advisory
+context**, `completion`, and that is the whole of the change to the ownership
+model — suspend, resume and the fixed teardown order are untouched.
+
+The five ids split across two contexts, because an opening action lives in the
+narrowest context guaranteed live *before* its target exists:
+
+```toml
+[editor]
+completion_open = ["tab"]
+
+[completion]
+accept = ["tab", "enter"]
+next   = ["down", "ctrl+n"]
+prev   = ["up", "ctrl+p"]
+cancel = ["esc"]
+```
+
+`tab` therefore resolves to two ids: `editor.completion_open` with the overlay
+hidden, `completion.accept` with it shown. Invariant 1 is per context, so this is
+not a collision. `ctrl+n`/`ctrl+p` shadow `editor.cursor_down`/`cursor_up` on
+purpose — "move down" is one intention either way. That is already what the
+Emacs preset would ask for, so its `completion` block overrides `cancel` alone,
+taking `ctrl+g` for keyboard-quit; the advisory context is innermost and present
+only while shown, so `ctrl+g` stays `editor.select_clear` everywhere else, which
+the old preset could not manage and worked around with `alt+g`.
+
+`editor.completion_open` covers the two cases a trigger character does not:
+invoking with no trigger in the buffer, and re-opening after `cancel` with the
+trigger still there. Typing `@` or `/` is text insertion, so it opens the overlay
+without passing through the namespace at all.
+
+**Shown, not open.** The advisory context is in the chain only while the overlay
+is shown, and an overlay whose candidate list is empty is not shown — the
+existing rule that a hidden overlay contributes no context does the work, with no
+gate of its own. With no candidates, `enter` submits.
+
+Implicit dismissal — the cursor leaving the trigger region, an edit emptying the
+list, `submit`, or focus leaving the editor — is component behaviour, not a
+binding. It gets no ids, deliberately.

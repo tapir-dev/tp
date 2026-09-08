@@ -356,10 +356,11 @@ mouse hits on the rows it occupies.
 _Avoid_: modal, focusable
 
 **Transient overlay**:
-An overlay that is pure paint: it never enters the ownership stack and never
-consumes a mouse hit. This is what makes "a focused overlay retains input
-ownership across transient UI" structurally true.
-_Avoid_: toast, notification, ephemeral
+An overlay that never enters the ownership stack and never consumes a mouse hit.
+This is what makes "a focused overlay retains input ownership across transient
+UI" structurally true. Owning no input does not mean being invisible to the
+keymap: a transient overlay may still contribute an advisory context.
+_Avoid_: toast, notification, ephemeral, pure paint
 
 **Suspended**:
 The state of an ownership-stack entry that is still painted but no longer
@@ -372,10 +373,23 @@ activates. Never a mode and never a component type.
 _Avoid_: keymap, mode, scope
 
 **Context chain**:
-The ordered list a key event is resolved against — focused component, then
-owner, then `app`. First match wins; suspended and hidden entries contribute
-nothing.
+The ordered list a key event is resolved against — advisory context, then
+focused component, then owner, then `app`. First match wins; suspended and
+hidden entries contribute nothing.
 _Avoid_: keymap stack, precedence list
+
+**Advisory context**:
+A binding context contributed by an overlay that owns no input. Innermost in the
+context chain, and present only while that overlay is shown, so it shadows the
+focused component while shown and vanishes otherwise. A chain holds at most one.
+_Avoid_: layer 0, transient context, overlay context
+
+**Completion overlay**:
+The overlay listing completion candidates, anchored to the cursor marker. It
+owns no input — the editor keeps receiving printable keys, so the list keeps
+narrowing as the user types — and reaches the keymap through its advisory
+context alone.
+_Avoid_: popup, dropdown, autocomplete menu, completion widget
 
 ### Mouse
 
