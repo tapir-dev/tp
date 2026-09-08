@@ -1,0 +1,82 @@
+# Vim-flavoured preset — an example, copied rather than selected.
+#
+#   tp keymap export vim > ~/.config/tp/keybindings.toml
+#
+# This is Vim-FLAVOURED, not modal. A binding context is never a mode, so
+# normal mode is unexpressible without redesigning the layer model; true modal
+# editing is refused for v1 with the reason recorded.
+#
+# Consequences of that refusal, both structural rather than matters of taste:
+#
+#   1. [editor] gets NOTHING from this preset. Without a normal mode, hjkl in
+#      the editor would replace typing with motion. It is left at the default.
+#   2. [transcript] cannot take bare letters. The editor is the focused
+#      component inside the transcript surface, so a bare `y` would resolve to
+#      transcript.copy and never reach text insertion. gg / G / y are therefore
+#      unavailable there, and the ctrl-prefixed scroll family carries the
+#      Vim feel instead. This preset frees ctrl+e / ctrl+y / ctrl+f / ctrl+b in
+#      [editor] so the transcript can claim them.
+#
+# What is left is genuine: hjkl-style motion everywhere the user is navigating
+# rather than typing.
+
+[select_list]
+next      = ["j", "down"]
+prev      = ["k", "up"]
+page_next = ["ctrl+f", "page_down"]
+page_prev = ["ctrl+b", "page_up"]
+first     = ["g", "home"]
+last      = ["shift+g", "end"]
+accept    = ["enter"]
+
+[session_tree]
+fork              = ["f"]
+fold_toggle       = ["z", "space"]
+jump_next_segment = ["bracket_right"]
+jump_prev_segment = ["bracket_left"]
+cycle_filter      = ["tab"]
+toggle_labels     = ["shift+l"]
+close             = ["esc", "q"]
+
+[transcript]
+scroll_line_up    = ["ctrl+y", "ctrl+up"]
+scroll_line_down  = ["ctrl+e", "ctrl+down"]
+scroll_page_up    = ["ctrl+b", "page_up"]
+scroll_page_down  = ["ctrl+f", "page_down"]
+scroll_top        = ["shift+home"]
+scroll_bottom     = ["shift+end"]
+copy              = ["alt+w"]
+plain_text_open   = ["alt+t"]
+selection_clear   = ["alt+q"]
+search_open       = ["ctrl+s"]
+
+# Freed so [transcript] above can claim ctrl+e / ctrl+y / ctrl+f / ctrl+b.
+# Motion falls back to the arrow and Home/End family.
+[editor]
+cursor_left       = ["left"]
+cursor_right      = ["right"]
+cursor_up         = ["up"]
+cursor_down       = ["down"]
+cursor_line_start = ["home"]
+cursor_line_end   = ["end"]
+yank              = ["alt+v"]
+
+# Bare n / N are unavailable: the query is typed into a single_line_input in
+# this same chain, so they would be stolen from the field.
+[search]
+next_match   = ["ctrl+n", "down"]
+prev_match   = ["ctrl+p", "up"]
+regex_toggle = ["alt+r"]
+close        = ["esc"]
+
+[sessions]
+new    = ["alt+n"]
+rename = ["alt+r"]
+close  = ["esc", "q"]
+
+[settings]
+edit         = ["alt+e"]
+commit       = ["ctrl+s"]
+revert       = ["ctrl+r"]
+filter_focus = ["ctrl+f"]
+close        = ["esc"]
