@@ -1,7 +1,8 @@
 # tp
 
-`tp` is a single-binary terminal coding agent whose every user-facing surface —
-layout, colors, keybindings, tools, providers, models — is data rather than code.
+`tp` is a terminal coding agent whose every user-facing surface — keybindings,
+themes, prompts, skills, context, sessions — is data rather than code. This
+glossary fixes the vocabulary that data model is described in.
 
 ## Language
 
