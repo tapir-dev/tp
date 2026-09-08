@@ -210,6 +210,90 @@ surface cannot represent the original. It happens while encoding a request and
 never alters what is stored.
 _Avoid_: conversion, downgrade — both suggest the stored form changes
 
+**Model source**:
+The three-tier composition that produces a model's resolved entry: a compiled
+built-in catalog, a network-refreshed disk cache, and user-authored overrides.
+It is what hands the seam an already-resolved row; the seam never learns the
+tiers existed. The network tier *discovers* — new ids and lifecycle dates —
+far more than it enriches, because no surface publishes prices and one
+publishes no context window.
+_Avoid_: model registry — the registry is the published result, not the machinery
+_Avoid_: catalog — one tier of three
+
+**Estimated window**:
+A context window standing in for one the source never supplied, taken as the
+smallest window known for that surface. It is marked wherever it is shown,
+because it drives the compaction trigger and a wrong one truncates silently.
+
+**Model entry**:
+A model's resolved metadata paired with its quirk row, keyed on a model
+identity. Metadata and quirk row are separate values with separate authority:
+the network tier may write metadata and may never write a quirk cell.
+_Avoid_: model definition — a user writes a patch, not a definition
+
+**Model identity**:
+The pair of a surface and a model id, written `surface/model`. A bare model id
+resolves only when unambiguous; where two surfaces carry the same id it is an
+error naming the candidates, never a silent pick.
+_Avoid_: model name — display text, not identity
+
+**Patch**:
+An entry in a merge stack carrying a glob predicate over the model id and a
+partial set of cells. Ordered, last match winning. A user override is a patch
+in the same stack, not a separate mechanism.
+_Avoid_: override — names one tier's use of the general thing
+
+**Selection list**:
+The ordered pattern list naming which models participate in cycling. It is a
+config array: globs expand, `!pattern` removes, `+path` and `-path` force. It
+is *not* a patch stack, and it carries no per-entry data.
+_Avoid_: model list, glob list — both blur it with the patch stack
+
+**Catalog cut date**:
+The date the built-in catalog's prices were last checked against a primary
+source. Carried per priced model and asserted by the build, so staleness is a
+failing test rather than a silent mischarge.
+
+**Value expression**:
+The resolved-at-request-time form a credential or header value takes: a
+literal, an environment variable reference, or an argv command whose stdout is
+used. One type; where it may be *stored* differs, since a header value is a
+config key and a credential is not.
+_Avoid_: secret, credential — the type also carries non-secret header values
+
+**Availability**:
+Whether a value expression is *configured*, and for the environment form
+whether the variable is set. It is never a claim that resolution will succeed:
+determining that for the command form would require executing it, which is the
+one thing availability may not do.
+_Avoid_: valid, working, reachable — all overclaim
+
+**Resolution**:
+Executing a value expression to produce its value. The only step permitted to
+run a command, and the only one that may fail at request time.
+
+**Auth attachment**:
+How a resolved credential is placed on the request — a header name, or a query
+parameter. It is data on the surface row, read by the transport. Resolving a
+credential and attaching it are different jobs in different places.
+
+**Contributor**:
+The origin of a usage record: an assistant message, an LLM call made inside
+tool execution, or a summarization call. Three variants exist in the type from
+the start; v1 emits two.
+
+**Context fill**:
+How full the current context window is, derived from the last assistant
+response. Distinct from lifetime totals, and explicitly absent — not zero —
+between a compaction and the next assistant response.
+_Avoid_: usage, tokens used — both collide with lifetime totals
+
+**Rate set**:
+A complete set of per-token prices, not a delta. A model carries an ordered
+list of rate sets keyed on a minimum input-token count; the highest whose
+threshold the request's input meets wins.
+_Avoid_: pricing tier — names the threshold, not the thing selected
+
 ### Overlays
 
 **Overlay**:
