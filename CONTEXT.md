@@ -999,3 +999,26 @@ never `escape_timeout_ms` — for the same reason a row count is spelled `height
 Where a duration also carries a sentinel, its domain is `"auto"` or an integer,
 and an explicit integer short-circuits the resolution ladder.
 _Avoid_: timeout value, delay setting, `*_ms` key
+
+**Negative declaration**:
+A written record that something considered as a config key is *not* one, kept on
+the axis page beside the keys that do exist. It carries the reason, not just the
+verdict. Without it a setting that was deliberately refused is
+indistinguishable from one nobody thought of, and the next reader files the same
+ticket again.
+_Avoid_: non-key, rejected key, won't-configure
+
+### Tools
+
+**Core tool**:
+One of the four tools always present in the draft — `read`, `write`, `edit`,
+`bash`. Being core is what makes them unconfigurable: they are the floor the
+agent is defined against, not an option, so no enable flag exists for them.
+_Avoid_: default tool, built-in tool, standard tool
+
+**Optional tool**:
+One of `grep`, `find`, `ls` — present in the draft only when its own config key
+enables it, and disabled by default because `bash` already covers all three and
+each costs system-prompt budget. "Disabled" is one state, not two: the tool is
+absent from the draft, hence absent from the prompt and not callable.
+_Avoid_: extra tool, opt-in tool, addon
