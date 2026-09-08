@@ -496,6 +496,28 @@ at all in the current terminal. Orphaning is the one condition that earns a
 message to the user; a missing capability no binding chain wanted is silence.
 _Avoid_: unbound action, broken binding
 
+**Action id**:
+The stable public name of one keystroke-invocable action, always written
+`<binding_context>.<action>` and never without its context. It is the name config,
+help text and extensions all use, which is why it outlives any key bound to it —
+and why it names nothing that is not invocable by a key: a command, a store verb
+and an action id may share a word without colliding, because none of the three
+is ever written bare.
+_Avoid_: action name, command id, binding name
+
+**Empty chain**:
+A binding chain with no keys, meaning the action is deliberately switched off.
+The opposite of orphaned rather than a degree of it: orphaning is keys that
+exist and cannot be delivered, and it speaks to the user; an empty chain is a
+choice, and it is silent.
+_Avoid_: unbound, disabled action, null binding
+
+**Opening action**:
+The action that brings an overlay into existence. It cannot live in the binding
+context it creates, so it lives in the narrowest context guaranteed live before
+its target exists, and it names the target rather than itself.
+_Avoid_: launcher, entry point, show action
+
 ### Terminal graphics
 
 **Start-up handshake**:
@@ -805,6 +827,13 @@ The editor's own bounded history of killed text, fed only by kill actions and
 read only by yank. Distinct from the system clipboard in both directions: no
 sync, no shared machinery.
 _Avoid_: clipboard, buffer, copy history
+
+**Kill action**:
+An editor action that removes text *and* feeds the kill ring, as against a
+delete action, which removes text and feeds nothing. The distinction is carried
+in the action id itself rather than in prose, so which of the two a binding does
+is legible without reading its documentation.
+_Avoid_: cut, erase, remove
 
 ### The transcript scroll view
 
