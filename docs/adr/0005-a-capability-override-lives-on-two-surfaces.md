@@ -81,3 +81,49 @@ ADR numbers collide across the unmerged wayfinder branches: `0001` through
 `0004` are each claimed by more than one branch. This file takes `0005` on the
 same assumption every other branch has made — that numbers are reconciled when
 the branches land, not before.
+
+## Amendment: the admission test was never about capabilities
+
+The consequence above titled *"Only capability overrides earn a mirror"* is
+**superseded**. It was true of the set of keys in front of the ticket that wrote
+it and false as a general rule, and the error is visible in this document's own
+reasoning: the argument for two surfaces — an env var is the right shape for the
+moment a value is needed, a config key is the right shape for the answer you
+keep — never mentions capabilities anywhere. It is an argument about the
+lifetime of a setting, and it generalises.
+
+The evidence that it was already false: the asset-resolution ticket declared
+three environment variables before this ADR existed, and one of them,
+`TP_SESSION_DIR`, sets the session directory. The moment the sessions axis
+declares a `directory` key, that variable *is* a mirrored entry under this ADR's
+own definition — a row that targets an existing config key rather than naming a
+variable of its own. Nothing was added to make that true; it was true and
+unnoticed.
+
+**The amended test.** An environment row is a **mirror** when a config key for
+the same setting can exist, and **standalone** when one cannot. The distinction
+is not about the subject matter of the setting but about whether config has been
+loaded yet at the moment the value is read:
+
+- `TP_CONFIG_DIR` is **standalone and must remain so**. It locates the config,
+  so it is read before any key exists. A key for it would be a key that names
+  the file it is read from.
+- `TP_SESSION_DIR` is a **mirror**, targeting `sessions.directory`.
+- The capability overrides are **mirrors**, exactly as enumerated above. The
+  capability admission test still decides which *terminal* keys exist at all; it
+  simply never decided which keys are mirrored.
+
+The enumeration is untouched, and with it the three grounds on which the generic
+`TP_<KEY>` mapping was rejected: each mirror is still one hand-written row in a
+closed registry, provenance is still a fact rather than a translation, and the
+lint against raw environment reads is unchanged. What changes is only the
+sentence that says which keys may earn a row.
+
+**Deliberately not settled: `TP_ASSET_DIR`.** The third variable overlays
+built-in assets per file. Whether the amended test reaches it depends on when an
+asset root is resolved relative to the config load, which belongs to the ticket
+that owns asset resolution and is closed. Applying the new test to it in passing
+would create exactly the orphan this amendment's ticket exists to close, so it
+is recorded as an open question on the map rather than answered here. Until it
+is answered, `TP_ASSET_DIR` stays standalone by default, which is what it is
+today.
