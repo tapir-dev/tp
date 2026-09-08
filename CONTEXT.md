@@ -10,12 +10,21 @@ data rather than code.
 
 **Asset**:
 A unit of data the product resolves at runtime rather than compiles in: a theme,
-a prompt, a doc, a skill.
+a command, a doc, a skill. These four are the asset kinds, and they are the only
+ones.
+_Avoid_: prompt — it names no kind; see Built-in prompt
 
 **Built-in asset**:
 An asset that ships as part of the product itself, carried by the binary.
 _Avoid_: bundled asset — the brief's term, ambiguous between the content and the
 directory it might live in
+
+**Built-in prompt**:
+The system prompt the product embeds. It is a doc, not a kind of its own: one
+file, addressed by its path, carrying no asset identity and so with nothing it
+could collide with. The user replaces it through configuration; a project never
+does.
+_Avoid_: prompt asset, default prompt, base prompt
 
 **Asset root**:
 A directory whose files overlay built-in assets of the same name.
