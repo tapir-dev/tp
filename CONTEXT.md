@@ -432,10 +432,14 @@ entirely.
 _Avoid_: capability state, terminal profile, caps
 
 **Provenance**:
-How a value in a capability snapshot came to be known — measured, assumed after
-no answer arrived, or set by the user. Distinguishes an absent capability from
-an unknown one, which matters because the two degrade the same way but are
-honest about different things.
+How a value in a capability snapshot came to be known, as one of five exclusive
+claims: **measured** (we asked and read the reply), **declared** (the terminal or
+the environment asserted it and we did not verify), **assumed** (we asked and
+nothing came back), **default** (there was no way to ask, so a stated policy
+applies) and **override** (the user set it). Distinguishes an absent capability
+from an unknown one, which matters because the two degrade the same way but are
+honest about different things — and keeps a value that was never measured from
+claiming it was.
 _Avoid_: source, origin, confidence
 
 **Binding chain**:
@@ -842,3 +846,27 @@ sidecar append. The third and last thing in this product that content can lose,
 alongside source truncation and compaction elision, and deliberately not called
 truncation.
 _Avoid_: Truncation (means two other things here), frame loss, dropping
+
+### Terminal capability overrides
+
+**Capability override**:
+A configuration key that sets, by hand, one field of the capability snapshot.
+Admission is the rule, not the topic: a key belongs here only if the snapshot has
+a field of that name carrying provenance. A preference about what `tp` chooses to
+emit is not a capability override however terminal-flavoured it sounds, because
+there is nothing about the terminal it could be wrong about.
+_Avoid_: terminal setting, capability flag, terminal option
+
+**Resolution ladder**:
+The ordered list of rungs an `auto` default is resolved through, each rung
+stamping the provenance it earns, ending in a fallback that is stated rather than
+left open. Every `auto` in the product is one of these, including the ones with a
+single rung; an explicit override is always the first rung and short-circuits the
+rest.
+_Avoid_: fallback chain (taken by theme roles), detection order, precedence
+
+**Colour depth**:
+How much colour the frame writer may express, as one exclusive value: none,
+indexed, or true colour. It is what a theme role is clamped to at resolution
+time, so a theme never has to know which terminal it landed on.
+_Avoid_: colour mode, colour support, palette size
