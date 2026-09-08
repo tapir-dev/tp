@@ -1,445 +1,357 @@
-# How a TOML editor associates a local JSON Schema file — raw catalogue
+# How a TOML editor associates a local JSON Schema file
 
-Research output for [tapir-dev/tp#30](https://github.com/tapir-dev/tp/issues/30).
+Research note for [issue #30](https://github.com/tapir-dev/tp/issues/30). Survey date: **2026-09-08**.
 
-**Scope.** The mechanisms by which a TOML editor or language server is told which
-JSON Schema applies to a given TOML document, restricted to what matters for `tp`:
-whether a *local filesystem path* works, whether the mapping file is found where `tp`
-would write it, and what the consumer does with the schema shape a Rust derive emits.
-This ticket **does not reopen D8**: committed, embedded and materialised schemas plus
-`tp config schema` stand regardless of the answer here. The only thing at stake is the
-`--write-editor-config` auto-association gesture. No CLI is designed here.
+D8 left one external fact unverified: whether a glob→schema mapping pointing at an
+absolute local path is a thing a TOML editor will actually read. This note settles
+it against the two implementations that exist, their source, and a running binary
+of each.
 
-**Method.** Primary sources only. Where documentation exists it is quoted and linked.
-Where documentation is silent, ambiguous, or contradicted, the implementation was read
-directly: source trees were downloaded and read locally —
-[`tamasfe/taplo`](https://github.com/tamasfe/taplo) at `master` (`08f343be0`,
-2026-07-28), [`tombi-toml/tombi`](https://github.com/tombi-toml/tombi) at `main`
-(`825161b60`, 2026-09-08), and [`jsonschema`](https://github.com/Stranger6667/jsonschema-rs)
-`0.17.1` from crates.io. Three small experiments were compiled and run locally against
-the real crates (`url` 2.x, `schemars` 0.8.22, `schemars` 1.2.2) — these are marked
-`verified (experiment)` and the program is described inline so it can be reproduced.
-**No editor was run.** Every claim that would require a live editor to confirm is
-marked `unverified` with the experiment that would settle it.
+**Every claim below carries a verification marker.** The load-bearing answers
+(§4, §5, §6) are empirical, because on this question the documentation is wrong
+in at least two places and silent in four more.
 
-**Doc access date: 2026-09-08.** This ecosystem is small but moving unevenly — taplo
-has had no release in ~16 months while tombi ships weekly. Re-verify before relying on
-any cell.
+| Marker | Meaning |
+| --- | --- |
+| `[D]` | Verified — the claim appears literally in primary documentation |
+| `[S]` | Verified — read out of the tool's own source code |
+| `[E]` | Verified empirically — reproduced against a running binary during this survey |
+| `[X]` | Derived — follows from a verified rule, but is not stated in any source |
+| `[I]` | Inferred from an issue (an open ticket is evidence about the state of the world) |
+| `[?]` | Could not confirm — treat as unknown, not as absence |
 
-**Reading the tables.**
+**Binaries used for `[E]`**: `taplo 0.10.0` (`taplo-cli` 0.10.0, `taplo-lsp` 0.8.0,
+`taplo-common` 0.6.0, installed from crates.io with `--features lsp`); `tombi 1.5.2`
+(x86_64-unknown-linux-gnu, from npm); `schemars 1.2.2`; `rustc`/`cargo` 1.98.0.
+LSP behaviour was reproduced by driving each server's stdio JSON-RPC directly, so
+"what the editor shows" below means the actual `textDocument/publishDiagnostics`,
+`textDocument/completion` and `textDocument/hover` payloads the server emits.
 
-- `verified (docs)` — stated in official documentation; the URL is in the Sources
-  section or inline.
-- `verified (source)` — read in the implementation; file path and line numbers given.
-  The source is a primary source; a blog post is not.
-- `verified (experiment)` — established by compiling and running the real crate here.
-- `none documented` — searched for and absent. Stronger than unknown: the feature does
-  not appear in the primary docs at all.
-- `inferred` — a conclusion drawn from two or more verified facts; the reasoning is
-  stated so it can be checked.
-- `unverified` — cannot be settled without a live editor; the experiment that would
-  settle it is named.
-- Where the docs and the source disagree, **both** are recorded and the source wins.
-  Several such disagreements exist and two of them are load-bearing.
+**Source read for `[S]`**: `tamasfe/taplo` at `08f343be` (2026-07-28, one commit
+past the 0.10.0 release) and `tombi-toml/tombi` at `825161b6` (2026-09-08).
 
 ---
 
-## 0. The landscape in one table
+## 1. Executive summary
 
-There are exactly two TOML language servers with schema support, and they are not
-interchangeable.
+1. **The gesture works, but not as one file.** There are two TOML language servers
+   in the field, they do not share a mapping-file format, and neither reads the
+   other's. One written artifact does **not** serve all editors; **two** do —
+   `.taplo.toml` and `tombi.toml` at the repository root — and between them they
+   cover every editor surveyed, because every editor integration is a shell around
+   one of these two servers and both servers read their config file rather than
+   editor settings. No `.vscode/settings.json`, `.helix/languages.toml` or
+   `.zed/settings.json` is required. `[E]` Both must sit at the **workspace-folder
+   root** — see finding 5a.
 
-| | taplo | tombi |
-|---|---|---|
-| Repo | `tamasfe/taplo` | `tombi-toml/tombi` |
-| Latest release | **`0.10.0`, 2025-05-23** | **`v1.5.2`, 2026-09-05** |
-| Last commit on default branch | `08f343be0`, 2026-07-28 | `825161b60`, 2026-09-08 |
-| VS Code extension | `tamasfe.even-better-toml` `0.21.2`, **last published 2024-12-20**, self-described *"preview extension"* | `tombi-toml.tombi`, last published 2026-09-05 |
-| Open issues | 239 | — |
-| Archived? | no | no |
-| Config file | `.taplo.toml` / `taplo.toml` | `.tombi.toml` / `tombi.toml` / `.config/tombi.toml` / `[tool.tombi]` in `pyproject.toml` |
-| Reads the *other's* config | no | no |
-| `#:schema` directive | origin of it | implements it, documented as Taplo-compatible |
+2. **A bare absolute filesystem path works in three of the four mechanisms, and
+   fails silently in the fourth — which is the one the D8 wording implies.** The
+   `#:schema` directive accepts one `[E]`. Taplo's `.taplo.toml` `schema.path`
+   accepts one `[E]`. Tombi's `tombi.toml` `[[schemas]].path` accepts one `[E]`.
+   But `evenBetterToml.schema.associations` — the VS Code setting — rejects it with
+   `invalid schema url error=relative URL without a base`, logs to a trace channel
+   nobody reads, and produces **no diagnostic and no completion at all**. `[E]`
+   There it must be a `file://` URI.
 
-`verified (source)` — release/commit dates from the GitHub REST API
-(`/repos/{owner}/{repo}/releases`, `/commits`, `/repos/{owner}/{repo}`) and the VS Code
-Marketplace `extensionquery` API, both read on 2026-09-08. taplo's own README still
-says *"The project is very young"*; there is no deprecation or maintenance notice.
+3. **Taplo silently drops the doc-comment of every key whose Rust type is a named
+   type.** `schemars` emits `{"description": …, "$ref": …, "default": …}` for such
+   a field; taplo's `collect_schemas` returns early the moment it sees `$ref`,
+   discarding the siblings (§7.2 `[S]`). Hovering `log_file: ConfigPath` shows
+   *"A filesystem path declared in config."* — the newtype's doc — never the key's
+   own. `[E]` Under D12 every key carries a mandatory doc-comment; in taplo, for
+   every enum-typed and every `ConfigPath`-typed key, that doc-comment is invisible.
 
-The practical consequence, established in §4: **taplo is no longer the default anywhere
-except VS Code, Neovim and Helix.** Zed ships no TOML language server at all and its
-docs point at tombi; Emacs `eglot` on `master` maps TOML to `tombi`; JetBrains uses
-neither.
+4. **One `schemars` setting fixes it: `inline_subschemas = true`.** With `$defs`
+   eliminated, every property carries its own `description` and `default` inline,
+   and taplo shows them — hover on a `ConfigPath` key becomes *"Where the log
+   goes."* and hover on an enum key gains the field's own sentence. `[E]` The cost
+   is a larger schema and a hard prohibition on recursive types.
+
+5. **Taplo's relative-path handling is anchored to the wrong thing, twice, and both
+   failures are silent.** A relative `include` glob or `schema.path` in
+   `.taplo.toml` is resolved against the **process CWD** in the CLI `[S][E]` and
+   against the **LSP workspace root** in the server `[S][E]` — never against the
+   config file that contains it, which the config's own doc-comments admit
+   (*"Relative paths are **not** relative to the configuration file"*) `[S]`.
+   Running `taplo lint` from a subdirectory of a project whose `.taplo.toml` lives
+   at the root therefore validates nothing, exits 0, and says nothing. `[E]`
+
+5a. **And in VS Code, `.taplo.toml` is not discovered by a walk at all.** Even
+   Better TOML runs the bundled **WASM** build, whose `findConfigFile` is a JS
+   callback that `path.join`s the two file names onto the directory it was handed
+   and returns — no `parent()` loop `[S]`. The ancestor walk verified against
+   `taplo lsp stdio` `[E]` is a property of the native binary that Helix, Neovim
+   and the CLI run, and does not transfer. The mapping file must be at the
+   workspace-folder root exactly.
+
+6. **`"./…"` in `evenBetterToml.schema.associations` resolves one directory too
+   high.** Taplo joins the value onto the workspace-root URL, which has no trailing
+   slash, so `Url::join` replaces the last segment: workspace `file:///tmp/x/proj`
+   plus `./schemas/config.json` yields `file:///tmp/schemas/config.json`. `[S][E]`
+   There is no working relative form for that setting; it is absolute `file://` or
+   nothing.
+
+7. **Tombi gets every one of these right.** Bare absolute and bare relative paths
+   both work in the directive and in `tombi.toml` `[E]`; relative paths and include
+   globs are anchored to the **config file's own directory** `[S][E]`; the LSP
+   discovers `tombi.toml` by walking up from **the edited document's directory**,
+   not from the workspace root `[S]`, which is exactly D14's semantics; and it
+   consumes the `schemars` 2020-12 output without losing a single `description` or
+   `default` `[E]`. It also has an explicit `JsonSchemaDialect` enum for draft-07 /
+   2019-09 / 2020-12 `[S]`, where taplo hands the document to `jsonschema` 0.17.1
+   and hopes `[S]`.
+
+8. **Zed is no longer a taplo editor.** Zed's own docs say TOML language-server
+   support comes from the **Tombi** extension `[D]`; Helix ships *both*
+   (`language-servers = [ "taplo", "tombi" ]`) `[S]`; `nvim-lspconfig` ships both
+   `[S]`. A taplo-only artifact would leave Zed users with nothing.
+
+9. **The versioned cache path is the gesture's real weakness, not the mechanism.**
+   #11-D6 version-keys the cache directory `[D]`, so an absolute mapping written
+   today names `…/tp/<version>/schemas/config.json` and goes stale on the next
+   upgrade — leaving a `.taplo.toml` in the user's repository pointing at a deleted
+   file. Taplo reports that as one line in a trace channel; the user sees
+   completion simply stop working. `[X]`
+
+10. **The `#:schema` directive truncates at the first space.** Taplo's parser is
+    `directive_content.split_whitespace()` taking one token `[S]`, so
+    `#:schema /home/u/my cache/schemas/config.json` loads
+    `file:///home/u/my` `[E]`. `.taplo.toml`'s `schema.path` has no such limit
+    `[E]`, and tombi's directive has no such limit `[E]`. Moot for D8 — it forbids
+    injecting a directive anyway — but it kills the directive as a fallback on any
+    machine whose cache path contains a space.
+
+11. **The third mechanism, a `$schema` key at the document root, is self-defeating
+    for `tp`.** Taplo supports it `[S][E]`; tombi ignores it `[E]`. And because D7
+    makes an unknown key an error and the schema carries
+    `additionalProperties: false`, taplo validates the `$schema` key against the
+    schema and reports *"Additional properties are not allowed ('$schema' was
+    unexpected)"*. `[E]` It cannot be used.
+
+12. **`oneOf` diagnostics are bad in taplo and acceptable in tombi.** One wrong
+    enum tag in a `[provider]` table produces **five identical** taplo errors
+    reading *"…is not valid under any of the schemas listed in the 'oneOf'
+    keyword"*, smeared across every key of the table `[E]`. Tombi reports *"the
+    value must be const value "anthropic", but found "wrong""* at the offending
+    value `[E]`. Neither approaches D17's contract, which is `tp`'s own loader's
+    job regardless.
 
 ---
 
-## 1. Table A — Association mechanisms that exist
+## 2. The four mechanisms
 
-One row per mechanism. "Local path?" is the load-bearing column.
+Association is not one thing. Ranked by taplo's own precedence constants
+(`crates/taplo-common/src/schema/associations.rs`) `[S]`:
 
-| # | Mechanism | Consumed by | Local path accepted? | Relative? | Absolute? |
-|---|---|---|---|---|---|
-| 1 | `#:schema <value>` header directive | taplo (LSP **and** CLI), tombi | **yes** | yes — relative to the *document* | **yes** (Unix); see the Windows note in §2.6 |
-| 2 | `"$schema" = "<value>"` root key | taplo, tombi | only if it starts with `.` | yes | **no** — a bare `/abs/path` is rejected |
-| 3 | `[schema] path` in `.taplo.toml` | taplo only | **yes** | yes — relative to the *workspace root / cwd*, **not** the config file | **yes** (Unix) |
-| 4 | `[[rule]]` + `[rule.schema] path` in `.taplo.toml` | taplo only | same as row 3 | same as row 3 | same as row 3 |
-| 5 | `evenBetterToml.schema.associations` in `settings.json` | taplo via the VS Code extension (and any client that answers `workspace/configuration` for section `evenBetterToml`) | **only as `./relative` or a `file://` URL** | yes, if prefixed `./` | **no** — a bare `/abs/path` is silently dropped |
-| 6 | `evenBetterToml.rules` in `settings.json` | same as row 5 | **yes** — goes through the row-3/4 code path | yes | yes |
-| 7 | `[[schemas]] path` + `include` in `tombi.toml` | tombi only | **yes** | yes — relative to the **directory containing the config file** | **yes** (Unix) |
-| 8 | `contributes.tomlValidation` in a VS Code extension manifest | taplo via Even Better TOML, VS Code only | `none documented` — examples show `https://` only | — | — |
-| 9 | Schema catalog (SchemaStore) | taplo, tombi, JetBrains | n/a — catalogue of URLs | — | — |
-| 10 | `TOML: Select Schema` command | Even Better TOML | n/a — picks from already-known schemas, **session-only, never persisted** | — | — |
-| 11 | `.idea/jsonSchemas.xml` | JetBrains IDEs only | **yes** (`relativePathToSchema`) | yes | yes |
+| Priority | Mechanism | Where it lives |
+| --- | --- | --- |
+| `MAX` | `taplo/associateSchema` LSP notification | editor plugin, runtime |
+| 75 | `#:schema` **directive** | first line of the TOML file |
+| 70 | `$schema` **root key** | inside the TOML document |
+| 60 | `evenBetterToml.schema.associations` | editor settings, LSP only |
+| 51 | `.taplo.toml` `[[rule]]` + `[rule.schema]` | project file |
+| 50 | `.taplo.toml` global `[schema]` | project file |
+| 25 | schema catalog (`schemastore.org`) | network |
+| 10 | built-in (`taplo://taplo.toml`) | binary |
 
-`verified (source)` for rows 1–7 and 10–11, `verified (docs)` for rows 8–9. Per-row
-detail and citations follow.
+Tombi's ladder is shorter and is documented as: `#:schema` directive, then
+`tombi.toml`, then the catalog `[D]`. There is **no editor-settings rung** — the
+Tombi VS Code extension contributes exactly three settings, `tombi.path`,
+`tombi.args`, `tombi.env`, and nothing about schemas `[S]`.
 
-### 1.1 The `#:schema` directive — exact syntax
+### 2.1 Who consumes what
 
-Docs, verbatim (<https://taplo.tamasfe.dev/configuration/directives.html>):
+| Mechanism | taplo CLI | taplo-lsp | tombi CLI | tombi-lsp |
+| --- | --- | --- | --- | --- |
+| `#:schema` directive | yes `[E]` | yes `[E]` | yes `[E]` | yes `[X]` |
+| `$schema` root key | yes `[E]` | yes `[X]` | **no** `[E]` | **no** `[X]` |
+| `.taplo.toml` | yes `[E]` | yes `[E]` | n/a | n/a |
+| `tombi.toml` | n/a | n/a | yes `[E]` | yes `[E]` |
+| editor settings | **no** `[S]` | yes `[E]` | n/a | n/a (none exist) |
 
-> All directive comments must follow the following pattern: `#:<name> <content>`.
->
-> It is possible to override the schema for a specific document by using the `schema`
-> header directive. A relative file path or an URL can be provided.
->
-> ```toml
-> #:schema ./foo-schema.json
-> foo = "bar"
-> ```
->
-> Relative paths are relative to the document file, if the file path is not known,
-> Taplo will be unable to find the schema.
->
-> Multiple schema directives in the same document are not supported and the behaviour
-> is undefined.
+The directive and the config file both live in `taplo-common` / tombi's
+`schema-store`, i.e. in the shared core, which is why the CLI and the server agree
+on them `[S]`. `evenBetterToml.schema.associations` lives in `taplo-lsp`'s
+`LspConfig` and is unreachable from the CLI `[S]`.
 
-`verified (docs)`. The lexing is stricter than the prose suggests:
+### 2.2 Exact syntax
 
-- The comment token must literally start with `#:`; the remainder is split on
-  whitespace, first token is the directive **name**, second token is the **value**.
-  Everything after the second token is discarded. **A schema path containing a space
-  cannot be expressed.** `verified (source)` — `crates/taplo/src/dom/mod.rs:337-345`.
-- It must be a *header* comment: it may only be preceded by other comments, and must
-  end before the first item in the document. `verified (source)` —
-  `crates/taplo/src/dom/node.rs:314-326` (`header_comments()` is
-  `comments().take_while(|c| c.end <= first_item.start)`).
-- Only the **first** `schema` directive is used (`break` after the first match).
-  `verified (source)` — `crates/taplo-common/src/schema/associations.rs:171-215`.
+**Directive** — must be a *header* comment, preceded only by other comments or
+directives; multiple `#:schema` directives in one document are explicitly
+undefined behaviour `[D]`:
 
-tombi implements the same directive and says so:
-*"Same as [Taplo], `#:schema` is used to specify the schema to use for the document.
-However, Tombi only allows document comment directives at the beginning of the
-document, so you need to add a blank line after the directive."*
-`verified (docs)` — <https://tombi-toml.github.io/tombi/docs/comment-directive/schema-document-directive>.
-
-### 1.2 The `.taplo.toml` schema keys — exact syntax
-
-Docs, verbatim (<https://taplo.tamasfe.dev/configuration/file.html>):
-
-> The `schema` table consists of only two keys:
->
-> - `path`: the path of the schema, this can be either path to a local file or an URL
->   with the schemes `taplo`, `http` or `https`. (`file` scheme is also accepted, it is
->   the same as specifying a local path)
-> - `enabled`: whether to enable the schema or not (`true` if omitted).
-
-`verified (docs)`. The docs **undercount the keys**: the struct has three.
-`verified (source)` — `crates/taplo-common/src/config.rs:355-375`:
-
-```rust
-pub struct SchemaOptions {
-    pub enabled: Option<bool>,
-    /// A local file path to the schema, overrides `url` if set.
-    ///
-    /// URLs are also accepted here, but it's not a guarantee and might
-    /// change in newer releases.
-    /// Please use the `url` field instead whenever possible.
-    pub path: Option<String>,
-    /// A full absolute URL to the schema.
-    ///
-    /// The url of the schema, supported schemes are `http`, `https`, `file` and `taplo`.
-    pub url: Option<Url>,
-}
+```toml
+#:schema ./foo-schema.json
+foo = "bar"
 ```
 
-Per-file targeting is a `[[rule]]` with an `include` glob:
+Taplo's docs state it accepts *"a relative file path or an URL"* and that
+*"Relative paths are relative to the document file"* `[D]`. The docs do not
+mention absolute paths; the source does, and they work (§4).
+
+**`$schema` root key** — a plain TOML key at the document root, read by taplo only:
+
+```toml
+"$schema" = "file:///abs/path/config.json"
+```
+
+**`.taplo.toml`** — file names `.taplo.toml`, then `taplo.toml` `[S][D]`:
 
 ```toml
 [[rule]]
-include = ["**/tp.toml"]
+include = [".tp/config.toml"]
 
 [rule.schema]
-path = "/home/me/.cache/tp/1/config.schema.json"
+path = "/home/u/.cache/tp/0.1.0/schemas/config.json"
 ```
 
-> In case of overlapping rules, the last defined rule always takes precedence.
+`schema.path` is documented as *"A local file path to the schema, overrides `url`
+if set. URLs are also accepted here, but it's not a guarantee and might change in
+newer releases. Please use the `url` field instead whenever possible."* `[S]`
+`schema.url` is typed `Option<Url>` and documented as *"A full absolute URL to the
+schema. … supported schemes are `http`, `https`, `file` and `taplo`"* `[S]`.
+Rule `include`/`exclude` are globs; overlapping rules resolve last-wins `[D]`.
 
-`verified (docs)`, same page.
-
----
-
-## 2. taplo — the load-bearing details
-
-### 2.1 Does a local path work where a URL is expected? **Yes, and here is exactly how**
-
-`verified (source)` — `crates/taplo-common/src/config.rs:242-262`, `Options::prepare`:
-
-```rust
-let url = match schema_opts.path.take() {
-    Some(p) => {
-        if let Ok(url) = p.parse() {          // 1. try to parse as a URL first
-            Some(url)
-        } else {
-            let p = if e.is_absolute(Path::new(&p)) {
-                PathBuf::from(p)              // 2. absolute path: used as-is
-            } else {
-                base.join(p).normalize()      // 3. relative path: joined to `base`
-            };
-            let s = p.to_string_lossy();
-            Some(Url::parse(&format!("file://{s}")).context("invalid schema path")?)
-        }
-    }
-    None => schema_opts.url.take(),
-};
-```
-
-The resulting `file://` URL is then fetched from disk:
-
-```rust
-match schema_url.scheme() {
-    "http" | "https" => …,
-    "file" => Ok(serde_json::from_slice(&self.env.read_file(…).await?)?),
-    scheme => Err(anyhow!("the scheme `{scheme}` is not supported")),
-}
-```
-
-`verified (source)` — `crates/taplo-common/src/schema/mod.rs:271-293`.
-
-The same "URL first, then path" shape governs the `#:schema` directive
-(`associations.rs:182-215`): parse as `Url`; on failure, if the value is an absolute
-path emit `file://{value}`, otherwise `doc_url.join(value)` — i.e. relative to the
-document. So **both** mechanisms accept an absolute local path on Unix.
-
-The `"$schema"` root key is the odd one out: it only special-cases values starting with
-`.`; anything else must parse as a `Url`, so a bare absolute path is rejected with
-`tracing::error!("invalid schema url or path given in the `$schema` field")`.
-`verified (source)` — `associations.rs:227-246`.
-
-### 2.2 What `base` is — and the resolution mismatch
-
-`Options::prepare(env, base)` is called from exactly two places:
-
-| Caller | `base` | Citation |
-|---|---|---|
-| taplo CLI | the **current working directory** | `crates/taplo-cli/src/lib.rs:71-83` |
-| taplo LSP | the **workspace root** | `crates/taplo-lsp/src/world.rs:256` |
-
-It is **never** the directory containing `.taplo.toml`. This is documented for
-`include`/`exclude` (*"Relative paths are **not** relative to the configuration file,
-but rather depends on the tool using the configuration"* —
-`crates/taplo-common/src/config.rs:29-31`, `verified (source)`) and undocumented for
-`schema.path`, which uses the identical `base`.
-
-`inferred`: a relative `schema.path` in a repo-root `.taplo.toml` resolves correctly
-only when the editor's workspace root *is* the repo root. Open a subdirectory as the
-workspace and the relative path silently resolves to the wrong place. An absolute path
-is immune to this.
-
-### 2.3 Is the mapping file's location fixed? **No — it is an upward walk**
-
-The docs say it is fixed:
-
-> By default, every tool looks for one in the working directory or the root of the
-> workspace by the following names (in precedence order): `.taplo.toml`, `taplo.toml`
-
-`verified (docs)` — <https://taplo.tamasfe.dev/configuration/file.html>.
-
-**The source disagrees.** `verified (source)` —
-`crates/taplo-common/src/environment/native.rs:110-132`:
-
-```rust
-async fn find_config_file(&self, from: &Path) -> Option<std::path::PathBuf> {
-    let mut p = from;
-    loop {
-        if let Ok(mut dir) = tokio::fs::read_dir(p).await {
-            while let Ok(Some(entry)) = dir.next_entry().await {
-                for name in CONFIG_FILE_NAMES {
-                    if entry.file_name() == *name {
-                        return Some(entry.path());
-                    }
-                }
-            }
-        }
-        match p.parent() {
-            Some(parent) => p = parent,
-            None => return None,
-        }
-    }
-}
-```
-
-Three findings from this function:
-
-1. **It walks up to the filesystem root**, starting from the workspace root (LSP,
-   `world.rs:243`) or the cwd (CLI, `lib.rs:53`). So `.taplo.toml` at the repository
-   root is found from anywhere at or below it. This *matches* D14's "walk to the
-   repository root" — there is **no mismatch**; taplo is strictly more permissive.
-   `inferred` from the two source facts.
-2. **The documented name precedence is not implemented.** The loop returns the first
-   *directory entry* matching either name, in `read_dir` order, which is
-   filesystem-dependent. If both `.taplo.toml` and `taplo.toml` exist in one directory,
-   which wins is not determined by the code. `verified (source)`.
-3. **It never searches downward.** A `.taplo.toml` in a subdirectory of the workspace
-   is invisible. `verified (source)`.
-
-**Exception — detached files.** If the LSP has no workspace folder (VS Code opened on a
-single file rather than a folder), the workspace root is the sentinel `root:///` and
-config discovery is skipped entirely: `else if self.root != *DEFAULT_WORKSPACE_URL` has
-no `else` branch that searches. `verified (source)` —
-`crates/taplo-lsp/src/world.rs:84`, `218-252`. In that mode only the in-file `#:schema`
-directive works.
-
-### 2.4 Precedence between the mechanisms
-
-`verified (source)` — `crates/taplo-common/src/schema/associations.rs:22-30`, and
-`association_for` picks `.max_by_key(|assoc| assoc.priority)` (`associations.rs:303-321`):
-
-```rust
-pub const BUILTIN: usize     = 10;
-pub const CATALOG: usize     = 25;
-pub const CONFIG: usize      = 50;   // [schema] in .taplo.toml
-pub const CONFIG_RULE: usize = 51;   // [[rule]] in .taplo.toml
-pub const LSP_CONFIG: usize  = 60;   // evenBetterToml.schema.associations
-pub const SCHEMA_FIELD: usize = 70;  // "$schema" = "…"
-pub const DIRECTIVE: usize   = 75;   // #:schema
-pub const MAX: usize         = usize::MAX;  // TOML: Select Schema
-```
-
-This matches the documented order at
-<https://taplo.tamasfe.dev/configuration/using-schemas.html> exactly. `verified (docs)`
-+ `verified (source)`.
-
-Two consequences worth writing down:
-
-- A user's `evenBetterToml.schema.associations` in `settings.json` **silently overrides**
-  anything `tp` writes into `.taplo.toml`.
-- A `#:schema` directive **always** wins over both.
-
-### 2.5 How the include glob is matched
-
-`[[rule]] include` globs are made absolute against `base` (§2.2) and matched against the
-document URI with the scheme stripped:
-
-```rust
-AssociationRule::Glob(g) => g.is_match(&*normalize_str(
-    url.as_str().strip_prefix(url.scheme()).unwrap().strip_prefix("://").unwrap(),
-)),
-AssociationRule::Regex(r) => r.is_match(&normalize_str(url.as_str())),
-```
-
-`verified (source)` — `crates/taplo-common/src/schema/associations.rs:413-431`. So the
-glob is matched against an absolute path, and `include = ["**/tp.toml"]` is the robust
-form; `include = ["tp.toml"]` becomes `<workspace-root>/tp.toml` and breaks if the
-workspace root is not the repo root.
-
-Note the asymmetry: `.taplo.toml` rules use **globs**; the VS Code
-`schema.associations` setting uses **regexes over the whole URI**. They are not
-interchangeable text.
-
-### 2.6 Windows: an absolute path in `[schema] path` or `#:schema` is broken
-
-Both code paths try `Url::parse` **before** treating the value as a path. A Windows
-absolute path parses as a URL whose scheme is the drive letter.
-
-`verified (experiment)` — a 12-line Rust program linked against `url` 2.x (the version
-taplo pins, `url 2.5.0` in its `Cargo.lock`), run here:
-
-```
-"C:\\Users\\me\\schema.json"        => Ok(scheme "c")
-"C:/Users/me/schema.json"           => Ok(scheme "c")
-"/home/me/.cache/tp/schema.json"    => Err(RelativeUrlWithoutBase)
-"./schema.json"                     => Err(RelativeUrlWithoutBase)
-"file:///home/me/s.json"            => Ok(scheme "file")
-Url::parse("file:///home/me/sch ema.json") => "file:///home/me/sch%20ema.json"
-```
-
-`inferred` from that plus `fetch_external`'s scheme match: on Windows, a bare absolute
-schema path is accepted as a URL with scheme `c` and then fails with
-`the scheme `c` is not supported`. Unix absolute and relative paths correctly fall
-through to the path branch. **A cross-platform writer must emit `file:///C:/…` on
-Windows.** `unverified` for the end-to-end editor behaviour — the experiment that would
-settle it is: on Windows, put `[schema] path = "C:\\tmp\\s.json"` in `.taplo.toml`,
-open a matching TOML file in VS Code, and read the taplo output channel for the
-`the scheme \`c\` is not supported` line.
-
-Separately, taplo builds the URL with `format!("file://{s}")` rather than
-`Url::from_file_path`, which is the API that handles drive letters and UNC paths. tombi
-uses `Url::from_file_path` — but only *after* the same `Url::from_str` attempt, so it
-inherits the same drive-letter hazard. `verified (source)` — taplo `config.rs:255-257`,
-tombi `crates/tombi-uri/src/lib.rs:106-110` and
-`crates/tombi-schema-store/src/store.rs:267-272`.
-
-### 2.7 Staleness: the schema is cached and nothing is watched
-
-`verified (source)` — `crates/taplo-common/src/schema/cache.rs:13-14` and `54-110`:
-
-```rust
-pub const DEFAULT_LRU_CACHE_EXPIRATION_TIME: Duration = Duration::from_secs(60);
-pub const DEFAULT_CACHE_EXPIRATION_TIME: Duration = Duration::from_secs(60 * 10);
-```
-
-`load_schema` consults the cache before `fetch_external` and stores whatever it fetched
-— **including `file://` schemas**; there is no `file://` bypass
-(`crates/taplo-common/src/schema/mod.rs:190-218`). The VS Code extension sets a disk
-cache path (`editors/vscode/src/client.ts:121`), so a locally materialised schema is
-copied into VS Code's `globalStorage` and served from there for up to 600 s. Exposed as
-`evenBetterToml.schema.cache.memoryExpiration` (default 60) and
-`.diskExpiration` (default 600).
-
-Also `none documented` / `verified (source)` by absence: grepping the whole taplo tree
-for `DidChangeWatchedFiles`, `FileSystemWatcher` and `watched_files` returns **nothing**.
-Neither `.taplo.toml` nor a `file://` schema is watched. `.taplo.toml` is only re-read
-when `workspace/didChangeConfiguration` fires
-(`crates/taplo-lsp/src/handlers/configuration.rs:12-29` → `ws.initialize` →
-`load_config`), i.e. when the user changes an editor setting.
-
-`inferred`: after `tp` writes `.taplo.toml`, or regenerates the materialised schema, the
-user must restart the language server (or touch an editor setting) to see the effect.
-
----
-
-## 3. tombi — the same questions
-
-### 3.1 Association mechanisms
-
-Priority, verbatim (<https://tombi-toml.github.io/tombi/docs/json-schema>):
-
-> 1. `#:schema` directive in the TOML file's top comment (compatible with Taplo)
-> 2. JSON Schema specified in the Tombi configuration file
-> 3. JSON Schema from the JSON Schema Store
-
-`verified (docs)`.
-
-The config-file form is an array of tables, not a rule with a nested schema table:
+**`tombi.toml`** — file names `.tombi.toml`, `tombi.toml`, `.config/tombi.toml`,
+or `[tool.tombi]` inside `pyproject.toml` `[S]`:
 
 ```toml
 [[schemas]]
-path = "schemas/partial.schema.json"
-include = ["tp.toml"]
+path = "/home/u/.cache/tp/0.1.0/schemas/config.json"
+include = [".tp/config.toml"]
 ```
 
-> - `path`: The schema path (URL or local file path)
-> - `include`: File match patterns to apply this schema (supports glob patterns)
->
-> For local paths, `path` is resolved relative to the directory containing the loaded
-> config file.
+`path` is a plain `String` `[S]`; `include` is a required non-empty glob list
+`[S]`; `exclude` is optional.
 
-`verified (docs)`, same page as §3.2. This is the **opposite** of taplo's rule and is the
-more useful one: a repo-root `tombi.toml` with a repo-relative path works regardless of
-where the editor's workspace root is.
+**Editor settings (taplo-lsp only)** — the LSP config section defaults to the
+string `evenBetterToml` `[S]`, which is why the VS Code extension's settings *are*
+the language server's settings. `associations` is a `HashMap<String, String>` whose
+key the extension documents as *"a regular expression … used to associate schemas
+with absolute document URIs"* and whose value *"must be an absolute URI to the JSON
+schema"* `[D]`. It is a **regex**, not a glob — unlike `.taplo.toml`'s `include`.
 
-`verified (source)` — `crates/tombi-schema-store/src/store.rs:261-278`:
+---
+
+## 3. Question 2, part one: does a local path work in the directive?
+
+Taplo's resolution, verbatim from `SchemaAssociations::add_from_document` `[S]`:
+
+```rust
+let schema_url: Url = match value.parse() {
+    Ok(url) => url,
+    Err(error) => {
+        tracing::debug!(%error, "invalid url in directive, assuming file path instead");
+        if self.env.is_absolute(Path::new(value)) {
+            match format!("file://{value}").parse() { … }
+        } else {
+            match doc_url.join(value) { … }
+        }
+    }
+};
+```
+
+So: parse as a URL; if that fails, an **absolute** path becomes `file://<path>`, and
+anything else is joined onto the **document's own URL**. Both branches exist, and
+both work.
+
+| Directive value | taplo | tombi |
+| --- | --- | --- |
+| `/abs/path/config.json` | works `[E]` | works `[E]` |
+| `./local/config.json` | works `[E]` | works `[E]` |
+| `local/config.json` | works `[E]` | works `[E]` |
+| `../../cache/0.1.0/schemas/config.json` | works `[E]` | works `[E]` |
+| `file:///abs/path/config.json` | works `[E]` | works `[E]` |
+| `~/nope.json` | **no expansion**; resolves to `<doc dir>/~/nope.json` `[E]` | same `[E]` |
+| `/abs/my cache/config.json` | **truncates at the space** → `file:///abs/my` `[E]` | works `[E]` |
+
+Relative directive paths are anchored to the **document file's directory** in both
+tools — `doc_url.join(value)` in taplo `[S]`, verified `[E]`; documented as such by
+taplo `[D]`.
+
+The space truncation is not a URL problem. `Url::parse("file:///home/u/my
+cache/config.json")` succeeds and percent-encodes the space `[E]`. It is taplo's
+directive lexer: `text.strip_prefix("#:")`, then `split_whitespace()`, then
+`.next()` twice — name, value, done `[S]`.
+
+The Windows form is fine, contrary to what `format!("file://{value}")` suggests:
+`Url::parse("file://C:\\Users\\First Last\\cache\\config.json")` yields host `None`
+and path `/C:/Users/First%20Last/cache/config.json` `[E]`, because the URL spec
+special-cases a drive letter in the authority position of a `file:` URL. On Windows
+`to_file_path()` maps that back to `C:\…` `[X]`.
+
+Failure is loud in the CLI (`ERROR … failed to load schema file://… ` plus a
+non-zero exit `[E]`) and, in tombi, is a *warning with a source location* pointing
+at the directive `[E]`. In the taplo **LSP** a bad directive produces no user-visible
+signal at all beyond the trace channel `[E]`.
+
+---
+
+## 4. Question 2, part two: does a local path work in the mapping file?
+
+This is the load-bearing table.
+
+| Mechanism | bare absolute | bare relative | `./` relative | `file://` URI |
+| --- | --- | --- | --- | --- |
+| `.taplo.toml` `schema.path` | **yes** `[E]` | yes, anchored wrong (§5) `[E]` | yes, anchored wrong `[E]` | yes `[E]` |
+| `.taplo.toml` `schema.url` | **no** `[E]` | no `[X]` | no `[X]` | yes `[E]` |
+| `evenBetterToml.schema.associations` | **no** `[E]` | no `[S]` | **broken** (§4.2) `[E]` | yes `[E]` |
+| `tombi.toml` `[[schemas]].path` | **yes** `[E]` | yes, anchored right `[E]` | yes `[E]` | yes `[E]` |
+| `$schema` root key (taplo) | **no** `[E]` | no `[S]` | yes `[E]` | yes `[E]` |
+| `taplo lint --schema` | **no** `[E]` | no `[X]` | no `[X]` | yes `[X]` |
+
+### 4.1 `schema.url` fails the *whole config file*, quietly
+
+`SchemaOptions.url` is `Option<Url>`, so a bare path is a **deserialisation**
+error, not a schema error. Taplo's reaction:
+
+```
+WARN taplo:load_config: invalid configuration file error=TOML parse error at line 1, column 1
+invalid value: string "/tmp/…/config.json", expected relative URL without a base
+```
+
+…and it then proceeds with `Config::default()` `[E]`. So one wrong key silently
+discards the user's formatter settings too. In the LSP the same failure path is
+`tracing::warn!(%error, "failed to load workspace configuration")` `[S]` — invisible.
+
+`schema.path` is the field that accepts a path, and it *overrides* `url` when both
+are set `[S]`. It resolves in `Options::prepare` `[S]`:
+
+```rust
+let p = if e.is_absolute(Path::new(&p)) { PathBuf::from(p) } else { base.join(p).normalize() };
+Some(Url::parse(&format!("file://{}", p.to_string_lossy()))?)
+```
+
+Unlike the directive, this path may contain spaces `[E]` — `Url::parse` encodes
+them and nothing splits on whitespace.
+
+### 4.2 The `"./…"` off-by-one in editor settings
+
+`taplo-lsp`'s `WorkspaceState::initialize` `[S]`:
+
+```rust
+let url = if schema_url.starts_with("./") {
+    self.root.join(schema_url)
+} else {
+    schema_url.parse()
+};
+```
+
+`self.root` is the workspace-folder URI, which clients send **without** a trailing
+slash. `Url::join` then replaces the final path segment. Reproduced: workspace
+`file:///tmp/tptest/proj`, setting value `"./schemas/config.json"`, resulting
+schema URL `file:///tmp/schemas/config.json` — the sibling of the project, not a
+child `[E]`. The server logs `failed to load schema` and emits an empty diagnostic
+list `[E]`.
+
+Consequence: **there is no working project-relative form of
+`evenBetterToml.schema.associations`.** A machine-specific absolute `file://` URI
+is the only option, which is precisely what makes a checked-in
+`.vscode/settings.json` a bad artifact for this.
+
+### 4.3 Tombi resolves the way one would expect
+
+`SchemaStore::load_config_schemas` `[S]`:
 
 ```rust
 let schema_uri = if let Ok(schema_uri) = SchemaUri::from_str(schema.path()) {
@@ -450,599 +362,476 @@ let schema_uri = if let Ok(schema_uri) = SchemaUri::from_str(schema.path()) {
 } { … }
 ```
 
-`inferred`: because `Path::join` with an absolute argument discards the base (documented
-std behaviour), an **absolute** `path` also works and ignores `base_dir_path`.
-
-### 3.2 Config discovery — documented, and it is an upward walk
-
-Verbatim (<https://tombi-toml.github.io/tombi/docs/configuration>):
-
-> **Project Level.** For each directory from the current directory up to the filesystem
-> root:
-> 1. `.tombi.toml` 2. `tombi.toml` 3. `.config/tombi.toml` 4. `[tool.tombi]` in
-> `pyproject.toml`
->
-> **User Level.** If nothing is found, Tombi then falls back to: 5.
-> `$XDG_CONFIG_HOME/tombi/config.toml` 6. `~/.config/tombi/config.toml` 7.
-> `~/Library/Application Support/tombi/config.toml` (macOS), `%APPDATA%\tombi\config.toml`
-> (Windows). **System Level.** 8. `/etc/tombi/config.toml` (Linux).
->
-> The base directory for configuration search depends on the context: for CLI usage, it
-> is the directory where the command is executed; for LSP usage, it is **the directory of
-> the currently opened file**.
-
-`verified (docs)`. Filenames confirmed at
-`crates/tombi-config/src/lib.rs:33-36`, `verified (source)`. Note tombi walks up from the
-*file*, not the workspace root — so it works in detached/no-folder editing where taplo
-does not.
-
-### 3.3 The `#:schema` directive in tombi
-
-`verified (source)` — `crates/tombi-ast-syntax/src/ast/impls/comment.rs:39-76` and
-`152-184`. Resolution order for the value:
-
-1. `file://.` / `file://..` / `file://./…` / `file://../…` — a tombi extension over
-   RFC 8089, resolved against the **document's directory**. Documented:
-   *"Although not defined by RFC 8089 … Tombi allows the specification of `.` and `..`
-   in the hostname of the `file://` file URI."* `verified (docs)`.
-2. Otherwise parse as a URI (`https://`, `file:///abs`, `tombi://…`).
-3. Otherwise treat as a path: if relative, join to the document's directory;
-   canonicalise; convert with `Url::from_file_path`. **An absolute path lands here and
-   works.**
-
-Fragments are supported throughout (`#/definitions/TableValue`, `#tableType`) — see the
-committed tests at `crates/tombi-lsp/tests/test_goto_definition.rs:178-251`.
-
-### 3.4 tombi's VS Code extension has no association settings
-
-`verified (source)` — `editors/vscode/package.json` in the tombi repo contributes exactly
-three settings: `tombi.path`, `tombi.args`, `tombi.env`. There is no `associations`
-escape hatch and no `settings.json` override. The on-disk `tombi.toml` is the only
-artifact. This is a *simplification* relative to taplo, not a gap.
+`base_dir_path` is `config_base_dir(config_path)` — the directory holding
+`tombi.toml`, or its parent when the config is at `.config/tombi.toml` `[S]`.
+`Path::join` with an absolute argument yields the absolute argument, so the same
+line serves both cases. Verified from a sub-sub-directory with both an absolute
+and a `./`-relative `path`: both validated `[E]`.
 
 ---
 
-## 4. Table B — Editors: what actually runs, and what artifact it reads
+## 5. Question 3: where the mapping file is looked for
 
-| Editor | TOML language server | Reads `.taplo.toml`? | Reads `tombi.toml`? | Needs its own artifact? |
-|---|---|---|---|---|
-| VS Code + `tamasfe.even-better-toml` | **taplo** (bundled `@taplo/lsp` WASM) | **yes**, auto-discovered | no | no — but `settings.json` can override at higher priority |
-| VS Code + `tombi-toml.tombi` | **tombi** | no | **yes** | no |
-| Neovim + nvim-lspconfig | **taplo** (`lsp/taplo.lua`) or **tombi** (`lsp/tombi.lua`) — user picks | yes (also a root marker) | yes (also a root marker) | **no** |
-| Zed | **tombi only** (`zed-extensions/toml` is grammar-only) | **no** | yes | no |
-| Helix | **both** — `language-servers = ["taplo", "tombi"]` by default for `toml` | yes | yes | no |
-| Emacs `lsp-mode` | **taplo** (`lsp-toml.el`) | yes | no | no |
-| Emacs `eglot` (`master` / Emacs 31) | **tombi** — `((toml-ts-mode conf-toml-mode) . ("tombi" "lsp"))` | no | yes | no |
-| Emacs `eglot` (Emacs 30) | **none registered** | — | — | user must add a server entry |
-| JetBrains IDEs (TOML plugin) | **none — no LSP at all** | **no** | **no** | **yes — `.idea/jsonSchemas.xml`** |
-| JetBrains IDEs + tombi plugin | tombi via `com.intellij.platform.lsp` | no | yes | no |
+**Taplo discovers by walking up — but anchors relative paths somewhere else.**
+`Environment::find_config_file` loops `read_dir` / `p.parent()` until the
+filesystem root `[S]`. The anchor for everything *inside* the file is a different
+value:
 
-Citations:
+| | discovery starts at | walks up? | `base` for relative `include` / `schema.path` |
+| --- | --- | --- | --- |
+| taplo CLI | process CWD `[S]` | yes, to `/` `[S][E]` | **process CWD** `[S][E]` |
+| taplo-lsp, native binary | LSP workspace root `[S]` | yes, above it `[S][E]` | **workspace root** `[S][E]` |
+| taplo-lsp, VS Code bundled | LSP workspace root `[S]` | **no — that one directory only** `[S]` | workspace root `[S]` |
+| tombi CLI | process CWD `[S]` | yes, to `/` `[S][E]` | **config file's directory** `[S][E]` |
+| tombi-lsp | **the edited document's directory** `[S]` | yes `[S]` | config file's directory `[S]` |
 
-- **VS Code / Even Better TOML** — `verified (source)`, `editors/vscode/package.json` in
-  `tamasfe/taplo`: dependency `"@taplo/lsp": "^0.8.0"`; setting `evenBetterToml.taplo.bundled`
-  default `true`; `evenBetterToml.taplo.configFile.enabled` default `true`, described as
-  *"Whether to enable the usage of a Taplo configuration file."*
-- **`evenBetterToml.schema.associations`** — `verified (source)`, same file, verbatim
-  description: *"The key must be a regular expression, this pattern is used to associate
-  schemas with absolute document URIs. Overlapping patterns result in undefined
-  behaviour and either matching schema can be used. The value must be an absolute URI to
-  the JSON schema."* The doc link embedded in that description
-  (`https://taplo.tamasfe.dev/configuration#visual-studio-code`) is a **404**.
-  `verified (docs)` by fetching it.
-  The value handling is `verified (source)` at `crates/taplo-lsp/src/world.rs:173-193`:
+**The walk is the `Environment`'s job, and VS Code's environment does not walk.**
+`Environment::find_config_file` is a trait method; the native implementation loops
+on `p.parent()` `[S]`, but Even Better TOML runs the **WASM** build by default
+(`evenBetterToml.taplo.bundled` defaults `true`, and the bundled path loads
+`dist/server.js`, which wraps the `@taplo/lsp` WASM module) `[S]`, and that build
+delegates `find_config_file` to a JS callback which is, in full `[S]`:
 
-  ```rust
-  let url = if schema_url.starts_with("./") { self.root.join(schema_url) }
-            else { schema_url.parse() };
-  ```
-
-  So `./relative` (resolved against the **workspace root**, not the settings file) and
-  `file:///abs` work; a bare `/abs/path` fails `Url::parse` and the association is
-  dropped with `tracing::error!(… "invalid schema url")`. `..`-prefixed values are not
-  special-cased.
-- **`evenBetterToml.rules`** — `verified (source)`, manifest + `world.rs:253`
-  (`self.taplo_config.rule.extend(self.config.rules.clone())`). This is the only
-  `settings.json` route that accepts a bare local path, because it goes through
-  `Options::prepare` (§2.1). Priority `CONFIG_RULE` (51), i.e. *lower* than
-  `schema.associations`.
-- **`TOML: Select Schema`** — `verified (source)`,
-  `editors/vscode/src/commands/schema.ts` + `crates/taplo-lsp/src/handlers/schema.rs`:
-  assigns `priority::MAX`, source `MANUAL`, is never written to `settings.json`, and the
-  handler carries the comment `// FIXME: there is no way to remove these.`
-- **Neovim** — `verified (source)`, `nvim-lspconfig/lsp/taplo.lua` in full:
-  `cmd = { 'taplo', 'lsp', 'stdio' }`, `filetypes = { 'toml' }`,
-  `root_markers = { '.taplo.toml', 'taplo.toml', '.git' }`. No `settings`, no
-  `init_options`. `nvim-lspconfig/lsp/tombi.lua`: `cmd = { 'tombi', 'lsp' }`,
-  `root_markers = { 'tombi.toml', 'pyproject.toml', '.git' }`. Neovim core ships no
-  `runtime/lsp/` directory — `verified (source)` by absence.
-- **Zed** — `verified (docs)`, <https://zed.dev/docs/languages/toml>: *"TOML support is
-  available through the TOML extension… A TOML language server is available in the Tombi
-  extension."* Taplo is not mentioned. `verified (source)`:
-  `zed-extensions/toml/extension.toml` contains only `[grammars.toml]` and **no**
-  `[language_servers.*]` block; the `zed-industries/extensions` registry has a `tombi`
-  entry and **no** `taplo` entry.
-- **Helix** — `verified (source)`, `helix-editor/helix/languages.toml`:
-  `taplo = { command = "taplo", args = ["lsp", "stdio"], config = {} }`,
-  `tombi = { command = "tombi", args = ["lsp"] }`, and for `name = "toml"`,
-  `language-servers = [ "taplo", "tombi" ]`.
-- **Emacs `lsp-mode`** — `verified (source)`, `emacs-lsp/lsp-mode/clients/lsp-toml.el`:
-  `:server-id 'taplo`, `initializationOptions` = `(:configurationSection "evenBetterToml"
-  :cachePath …)`, and the whole `evenBetterToml` settings surface mirrored via
-  `lsp-defcustom`, including `lsp-toml-schema-associations` and
-  `lsp-toml-taplo-config-file-enabled` (default `t`).
-  `verified (docs)` — <https://emacs-lsp.github.io/lsp-mode/page/lsp-toml/>.
-- **Emacs `eglot`** — `verified (source)`, `eglot-server-programs` in both
-  `emacs-mirror/emacs` `master` `lisp/progmodes/eglot.el:319` and `joaotavora/eglot`
-  `eglot.el:318`: `((toml-ts-mode conf-toml-mode) . ("tombi" "lsp"))`. On the
-  `emacs-30` branch there is **no** TOML entry at all. `none documented` for any official
-  eglot+taplo recipe.
-- **JetBrains** — `verified (source)`,
-  `intellij-community/plugins/toml/json/src/main/kotlin/org/toml/ide/json/TomlJsonSchemaEnabler.kt`
-  and registry key `org.toml.json.schema` default `true` in
-  `plugins/toml/core/src/main/resources/intellij.toml.core.xml`. The mapping store is
-  `@State(name = "JsonSchemaMappingsProjectConfiguration", storages = @Storage("jsonSchemas.xml"))`
-  in `json/backend/src/com/jetbrains/jsonSchema/JsonSchemaMappingsProjectConfiguration.java`,
-  entries carrying `relativePathToSchema` + `patterns`. `verified (docs)` for the UI —
-  <https://www.jetbrains.com/help/idea/json.html>: Settings → Languages & Frameworks →
-  Schemas and DTDs → **JSON Schema Mappings**. SchemaStore catalogue constants live in
-  `json/backend/src/com/jetbrains/jsonSchema/remote/JsonSchemaCatalogManager.java`.
-  `none documented`: the JetBrains help page never names TOML as a SchemaStore consumer,
-  though the mechanism is file-name based and TOML satisfies the enabler.
-
-### 4.1 Does one written file serve them all? **No.**
-
-`inferred`, from Table B:
-
-Of the ten rows in Table B:
-
-- `.taplo.toml` serves **four** (VS Code+EBT, Neovim-on-taplo, Helix, Emacs `lsp-mode`).
-- `tombi.toml` serves **six** (VS Code+tombi, Neovim-on-tombi, Zed, Helix, Emacs `eglot`
-  on `master`, JetBrains+tombi).
-- Together they still miss JetBrains' **native** TOML support, which needs
-  `.idea/jsonSchemas.xml` and reads neither, and Emacs 30's `eglot`, which registers no
-  TOML server at all.
-- The **only** artifact that spans both servers is the in-file `#:schema` directive —
-  **eight of ten** rows, missing native JetBrains (no LSP) and Emacs 30 `eglot`
-  (no server registered, so nothing to honour it).
-
-An `unverified` corollary for Neovim, Helix and eglot: all three can forward arbitrary
-settings to a server that asks for them, and taplo asks for section `evenBetterToml`
-(`crates/taplo-lsp/src/config.rs`, default `configuration_section`). So
-`vim.lsp.config('taplo', { settings = { evenBetterToml = { schema = { associations = … } } } })`,
-Helix `[language-server.taplo.config.evenBetterToml.schema]`, and eglot's
-`eglot-workspace-configuration` in `.dir-locals.el` are all mechanically equivalent to
-the VS Code setting. `verified (source)` for each client's `workspace/configuration`
-handler (`neovim runtime/lua/vim/lsp/handlers.lua` `lookup_section`;
-`helix-term/src/application.rs` `MethodCall::WorkspaceConfiguration`; `eglot.el`
-`eglot-workspace-configuration`) but `none documented` for the taplo-specific
-combination. The experiment that would settle it: run the server with an LSP trace and
-confirm the `workspace/configuration` reply carries the associations map.
-
----
-
-## 5. Schema dialect — what a Rust derive emits vs what the consumer accepts
-
-### 5.1 What taplo actually supports
-
-The docs claim Draft 4:
-
-> All features from the [Draft 4](https://json-schema.org/specification-links.html#draft-4)
-> specification are supported, the schemas may contain external and even recursive
-> references as well.
-
-`verified (docs)` — <https://taplo.tamasfe.dev/configuration/developing-schemas.html>.
-The CLI page says the same (*"validation via JSON Schemas (Draft 4)"*).
-
-**The source says Draft 4/6/7, defaulting to Draft 7, with a silent fallback.**
-
-- `verified (source)` — `crates/taplo-common/Cargo.toml`:
-  `jsonschema = { version = "0.17.1", default-features = false }`.
-- `verified (source)` — `jsonschema-0.17.1/src/schemas.rs:4-27`: the `Draft` enum has
-  `Draft4`, `Draft6`, `Draft7` unconditionally; `Draft201909` and `Draft202012` are
-  `#[cfg(feature = "draft201909")]` / `#[cfg(feature = "draft202012")]`. Neither feature
-  is in `default` (`default = ["resolve-http", "resolve-file", "cli"]`), and taplo sets
-  `default-features = false` anyway. `impl Default for Draft { Draft::Draft7 }`.
-- `verified (source)` — `jsonschema-0.17.1/src/schemas.rs:184-206`, `draft_from_url` is
-  **plain string equality** against five URIs, each with a **mandatory trailing `#`**:
-  `http://json-schema.org/draft-0{4,6,7}/schema#` (plus the two feature-gated `https`
-  2019-09/2020-12 ones). It returns `Option`, and the caller
-  (`src/compilation/options.rs:301-322`) has no `else`:
-
-  ```rust
-  if self.draft.is_none() {
-      if let Some(draft) = schemas::draft_from_schema(schema) { config.with_draft(draft); }
+```js
+findConfigFile: from => {
+  const fileNames = [".taplo.toml", "taplo.toml"];
+  for (const name of fileNames) {
+    try {
+      const fullPath = path.join(from, name);
+      fs.accessSync(fullPath);
+      return fullPath;
+    } catch {}
   }
-  ```
+}
+```
 
-  **An unrecognised `$schema` is not an error. It silently becomes Draft 7.**
-- `verified (source)` — taplo never calls `with_draft`:
-  `crates/taplo-common/src/schema/mod.rs:260-268` is
-  `JSONSchema::options().with_resolver(…).with_format("semver", …).compile(schema)`.
+No loop, no `parent()`. So in **VS Code**, `.taplo.toml` must sit exactly at the
+workspace-folder root or it is not found at all — where Helix, Neovim and the CLI,
+which run the native binary, walk up from there. The `[E]` walk results above were
+obtained against the native `taplo lsp stdio` and do **not** transfer to VS Code.
 
-`inferred`, and this is the headline dialect fact: **a schema declaring
-`"$schema": "https://json-schema.org/draft/2020-12/schema"` is validated by taplo as
-Draft 7, with no warning to anyone.** `prefixItems`, `unevaluatedProperties`,
-`unevaluatedItems`, `dependentRequired` and `dependentSchemas` land in
-`unmatched_keywords` and are ignored.
+The taplo config's own doc-comments say this outright: *"Relative paths are **not**
+relative to the configuration file, but rather depends on the tool using the
+configuration."* `[S]` The published docs say `include` globs are *"relative to the
+working directory (or root of the workspace)"* `[D]` and describe discovery as
+*"the working directory or workspace root"* — understating the walk `[D]`.
 
-Primary evidence that this is observed in the wild, not just implied by the code: taplo
-issue [#497](https://github.com/tamasfe/taplo/issues/497), *"Discrepancy in validation
-with JSON Schema draft 2020-12"* (open since 2023-10-30), reports exactly that
-`unevaluatedProperties: false` fails to invalidate. An issue is a primary source for
-*"this is a known defect"*, not for *"this is how it works"* — the mechanism above is
-the source-verified explanation.
+**The failure this produces is silent.** With `.taplo.toml` at `proj/` containing
+`include = ["**/.tp/config.toml"]`, `taplo lint ../../.tp/config.toml` run from
+`proj/sub/deeper` logs `found configuration file path="/tmp/…/proj/.taplo.toml"`,
+collects the file, matches no rule (the glob was made absolute against
+`proj/sub/deeper`), emits nothing, and **exits 0** `[E]`. The same command with an
+absolute `include` glob validates and exits non-zero `[E]`. Same for `schema.path`:
+from the subdirectory, `./schemas/config.json` resolves to
+`file:///tmp/…/proj/sub/deeper/schemas/config.json` `[E]`.
 
-Note `$defs` itself is fine: taplo resolves `$ref` fragments as raw JSON pointers
-(`reference_url` strips the leading `#/`, `resolve_schema` prepends `/` and calls
-`Value::pointer`), which is draft-agnostic. `verified (source)` —
-`crates/taplo-common/src/schema/mod.rs:240-258`, `627-634`.
+Under the **LSP** the anchor is the workspace root, so relative `include` and
+relative `schema.path` both behave correctly for an editor opened at the project
+root `[E]` — including when `.taplo.toml` itself sits *above* the workspace root
+`[E]`.
 
-### 5.2 What tombi supports
-
-`verified (source)` — `crates/tombi-schema-store/src/json_schema_dialect.rs:5-27`:
-`enum JsonSchemaDialect { #[default] Draft07, Draft2019_09, Draft2020_12 }`, selected by
-matching the `$schema` URI's **host and path** (so `http`/`https` and a trailing `#` are
-both tolerated). Unknown → default Draft07.
-
-The repo's own design document states the policy, verbatim (translated from Japanese;
-`design/json-schema-compliance-policy.md`, `verified (source)`):
-
-> The formally supported dialects are the three `draft-07` / `draft-2019-09` /
-> `draft-2020-12`. … If `$schema` is specified, the dialect is determined from that URI.
-> The default dialect when `$schema` is unspecified is `draft-07`. An unknown `$schema`
-> URI is treated the same as unspecified and evaluated as `draft-07`.
-
-So tombi accepts a 2020-12 schema natively where taplo silently downgrades it.
-
-### 5.3 What `schemars` emits — measured, not read
-
-`verified (experiment)`. Two binaries were compiled and run here against the real crates
-(`schemars 0.8.22` and `schemars 1.2.2`) over the same input types: a `struct
-ConfigPath(String)`, a doc-commented unit enum, a plain unit enum, an externally tagged
-enum, an untagged enum, an internally tagged enum, `#[serde(default)]`,
-`#[serde(default = "fn")]` and `#[serde(transparent)]`. The relevant output rows:
-
-| Construct | schemars 0.8 (default) | schemars 1.x (default) | schemars 1.x with `SchemaSettings::draft07()` |
-|---|---|---|---|
-| Root `$schema` | `http://json-schema.org/draft-07/schema#` | `https://json-schema.org/draft/2020-12/schema` | `http://json-schema.org/draft-07/schema#` |
-| Definitions | `definitions` | `$defs` | `definitions` |
-| Field with metadata + named type | `{"description":…, "default":…, "allOf":[{"$ref":…}]}` | `{"description":…, "$ref":…, "default":…}` | `{"description":…, "allOf":[{"$ref":…}], "default":…}` |
-| Unit enum, no variant docs | `{"type":"string","enum":["Quiet","Verbose"]}` | same | same |
-| Unit enum, **with** variant docs | `oneOf` of `{"description":…,"type":"string","enum":["quiet"]}` | `oneOf` of `{"description":…,"type":"string","const":"quiet"}` | `oneOf` of `const` |
-| Externally tagged enum with data | `oneOf` of wrapper objects, `additionalProperties:false` | same | same |
-| Internally tagged (`#[serde(tag)]`) | `oneOf`, tag as `enum:["A"]` | `oneOf`, tag as `const:"A"` | `oneOf`, `const` |
-| `#[serde(untagged)]` | **`anyOf`** | **`anyOf`** | `anyOf` |
-| `struct ConfigPath(String)` | `{"description":…, "type":"string"}` — **transparent** | same | same |
-| `#[serde(transparent)]` newtype | inlined `{"type":"string"}`, no `$defs` entry | same | same |
-| `#[serde(default = "f")]` | `"default": "quiet"`, field dropped from `required` | same | same |
-| `#[serde(default)]` on `u32` | `"default": 0`, dropped from `required` | same | same |
-| Doc comment | whole comment → `description`; `title` only if the first line is a markdown ATX heading | same (whitespace handling differs) | same |
-
-Corroborating `verified (source)` from the schemars trees:
-`schemars/src/generate.rs:66-72` (`Default for SchemaSettings` = `draft2020_12()` in 1.x,
-`draft07()` in 0.8); the four presets `draft07()`, `draft2019_09()`, `draft2020_12()`,
-`openapi3()` with their `meta_schema` and `definitions_path`;
-`schemars_derive/src/schema_exprs.rs:471-484` (`let keyword = if unique { "oneOf" } else { "anyOf" }`,
-with untagged forcing `unique = false`); `schemars/src/_private/rustdoc.rs`
-`get_title_and_description` (heading-gated title split, **not** first-line-vs-rest);
-`schemars/src/_private/mod.rs:174-197` (autoref specialisation — the `default` keyword is
-silently omitted if the type does not implement `Serialize`).
-
-Two corrections to beliefs stated in the ticket brief:
-
-- **`oneOf` → `anyOf` for untagged enums did not change between 0.8 and 1.x.** 0.8.22
-  already emitted `anyOf` for untagged. `verified (source)` —
-  `schemars/tests/expected/enum-untagged.json` at `v0.8.22` and the identical comment in
-  `schemars_derive/src/schema_exprs.rs`. The real `anyOf`→`oneOf` transition was 0.8.6
-  (2021-09-26) and it went the *other* way, for *tagged* enums only. A genuine new 1.x
-  case exists: `#[serde(untagged)]` on an *individual variant* (added 1.0.0-alpha.19)
-  demotes an otherwise-tagged enum's combiner to `anyOf`.
-- **A newtype such as `ConfigPath` is already transparent** in both majors — it produces
-  `{"type":"string"}`, not a wrapper. `#[serde(transparent)]` / `#[schemars(transparent)]`
-  changes *identity*, not structure: the derive forwards `schema_name`/`schema_id`/
-  `json_schema` to the inner type, so the newtype loses its `title` and its `$defs` entry
-  entirely — **unless** the struct or its field carries any metadata attribute (a doc
-  comment counts), in which case the full-delegation path is disabled and `title`/
-  `description`/validation are retained. `verified (source)` —
-  `schemars_derive/src/lib.rs:181-198`.
-
-### 5.4 Table C — where it degrades, in terms a user sees
-
-The question is not "does the keyword parse" but "what appears on screen". taplo's
-completion and hover walk the raw JSON themselves; only diagnostics go through
-`jsonschema`. The two paths degrade differently.
-
-| Construct emitted | Completion offered | Hover description | Diagnostic reported |
-|---|---|---|---|
-| `{"type":"string","enum":[…]}` (unit enum, no docs) | **yes** — one item per enum value, correct TOML quoting | the schema's `description` | correct `… is not one of […]` |
-| `oneOf` of `const` (unit enum **with** variant docs) | **yes** — one item per branch, each carrying its own branch `description` | per-branch descriptions concatenated | see below |
-| `oneOf` of objects (tagged / externally tagged enums) | **yes but undiscriminated** — the union of keys from *all* branches is offered, regardless of which variant the document is | descriptions of all matching branches concatenated | **degraded** — see below |
-| `anyOf` (untagged enums) | same union behaviour | same | `… is not valid under any of the schemas listed in the 'anyOf' keyword` |
-| `{"description":…, "allOf":[{"$ref":…}], "default":…}` (schemars 0.8 / 1.x-draft07) | **yes, with the field's own doc comment and default** | field description lost on key hover; type description shown | fine |
-| `{"description":…, "$ref":…, "default":…}` (schemars 1.x default) | **description and default silently dropped** | field description lost; type description shown | fine (annotations only) |
-| newtype `ConfigPath` → `{"type":"string"}` | string-value snippet offered | the newtype's doc comment as `description` | correct |
-| `"default": …` on a scalar field | offered as a completion item labelled with the TOML rendering of the default | shown | field correctly not `required` |
-
-Citations for each row:
-
-- **Union, not discrimination.** `verified (source)` —
-  `crates/taplo-common/src/schema/mod.rs:328-400` (`collect_schemas`) and `496-595`
-  (`collect_child_schemas`) both do
-  `for one_of in schema["oneOf"].as_array() { recurse(one_of) }` and the same for
-  `anyOf`, unconditionally, with no attempt to test the current value against each
-  branch. Every branch's keys end up in the completion list.
-- **Value completion reads `enum`, `const` and `default` directly.** `verified (source)` —
-  `crates/taplo-lsp/src/handlers/completion.rs:460-575`, `add_value_completions`: an
-  `enum` array produces one item per value with per-index docs from the `x-taplo` docs
-  extension or the schema `description`; then `const`; then `default`.
-- **The `$ref`-sibling drop.** `verified (source)` — `collect_child_schemas` starts with
-  `if let Some(schema) = self.ref_schema_value(root_url, schema).await { return … }`
-  (`mod.rs:496-514`, `ref_schema_value` at `601-620`) — the siblings of `$ref` are
-  discarded before anything else happens. The `allOf` form is handled explicitly by a
-  special case whose own comment reads
-  `// Deal with the { "description": "Foo", "allOf": [{ "$ref": "Bar" }] } pattern.`
-  (`mod.rs:529-568`), which merges the resolved `$ref` **under** the wrapper's own keys,
-  so `description` and `default` survive. taplo's docs state the rule plainly:
-  *"The `x-taplo` field (and any other fields) are ignored if `$ref` is present in an
-  object."* `verified (docs)`.
-  `inferred`: schemars 0.8's output shape is exactly what taplo was written to handle;
-  schemars 1.x's default output is exactly what taplo drops.
-- **`oneOf` diagnostics.** `verified (source)` —
-  `jsonschema-0.17.1/src/keywords/one_of.rs:68-96`: `get_first_valid` returns the index
-  of the first branch that validates; if none does, the *only* error produced is
-  `ValidationError::one_of_not_valid`, rendered by
-  `src/error.rs:844-848` as
-  `"{instance} is not valid under any of the schemas listed in the 'oneOf' keyword"`,
-  where `{instance}` is the **whole failing value**. taplo passes that string straight
-  through as the diagnostic message
-  (`crates/taplo-lsp/src/diagnostics.rs:300-320`, `error.error.to_string()`).
-  `inferred`, and this is the concrete user-visible cost: a typo in one key inside an
-  externally tagged enum variant produces *one* diagnostic on the entire table saying
-  the table matches no variant, instead of "unknown key".
-  If two branches both validate, the message is
-  `"… is valid under more than one of the schemas listed in the 'oneOf' keyword"`.
-- **Known-defect evidence, and a correction.** taplo issue
-  [#857](https://github.com/tamasfe/taplo/issues/857) (open, 2026-04-01),
-  *"`oneOf` with `const` discriminator validates against wrong branch"*, is widely the
-  obvious citation here. **It is filed on the wrong tracker.** Its quoted error text is
-  `The value must be one of ["…"], but found "…"`, which is **tombi's** wording —
-  `crates/tombi-validator/src/diagnostic.rs:72`,
-  `#[error("the value must be one of [{}], but found {actual}", .expected.join(", "))]`.
-  Neither taplo nor `jsonschema` 0.17.1 produces that string (`grep` for `must be one of`
-  in both trees returns nothing; `jsonschema` says `"{} is not one of {}"`). The reporter
-  was in Zed, and Zed runs tombi (§4). `verified (source)`. So #857 is primary evidence
-  of a **tombi** wrong-branch defect, not a taplo one. taplo issue
-  [#739](https://github.com/tamasfe/taplo/issues/739) is *not* usable either — the
-  reporter closed it the same day with *"Never mind. The schema is wrong."*
-- **tombi's `oneOf` handling is structurally different.** `verified (source)` — tombi has
-  explicit branch-selection machinery that taplo lacks:
-  `crates/tombi-validator/src/match_evidence.rs` (a `MatchEvidence` struct counting
-  matched root/type/singleton assertions and evaluated locations),
-  `crates/tombi-validator/src/branch_evaluation.rs` (`enum BranchApplicability { Applicable,
-  Rejected { diagnostic_ranges } }`, `enum Applicator { OneOf, AnyOf }`), and
-  `crates/tombi-validator/src/validate/one_of.rs`. Its design doc commits to composing
-  `EvaluatedLocations` across `oneOf`/`anyOf`/`allOf`/`if-then-else` rather than
-  approximating. `unverified` behaviourally: I read the implementation but could not run
-  an editor. Given #857 the machinery is evidently not yet correct in all cases. The
-  experiment that would settle it: feed the schemas `tp` will actually emit to
-  `tombi lint` and to `taplo lint` from the CLI (both are headless and both apply
-  `#:schema`) and diff the diagnostics.
+**Against D14.** `tp`'s project layer is the *nearest* `.tp/config.toml` walking up
+from CWD to the repository root, so in a monorepo it may live at
+`repo/packages/foo/.tp/config.toml`. Taplo only walks **up** from the workspace
+root; a `.taplo.toml` written next to that nested `.tp/` is *below* the root of an
+editor opened on the repository and will never be found `[X]`. Tombi's LSP, which
+walks up from the edited document's own directory `[S]`, finds it. **The gesture
+must write at the repository root, not beside the `.tp/` directory it describes** —
+and its `include` glob must then be `**/.tp/config.toml` rather than
+`.tp/config.toml`.
 
 ---
 
-## 6. Sources
+## 6. Question 4: the dialect the Rust derive emits
 
-**taplo** — docs: [directives](https://taplo.tamasfe.dev/configuration/directives.html),
-[configuration file](https://taplo.tamasfe.dev/configuration/file.html),
-[using schemas](https://taplo.tamasfe.dev/configuration/using-schemas.html),
-[developing schemas](https://taplo.tamasfe.dev/configuration/developing-schemas.html),
-[CLI validation](https://taplo.tamasfe.dev/cli/usage/validation.html).
-Source (`master`, `08f343be0`): `crates/taplo-common/src/config.rs`,
-`crates/taplo-common/src/environment/native.rs`,
-`crates/taplo-common/src/schema/{mod,associations,cache}.rs`,
-`crates/taplo-common/Cargo.toml`,
-`crates/taplo-lsp/src/{world,config}.rs`,
-`crates/taplo-lsp/src/handlers/{completion,hover,configuration,documents,schema}.rs`,
-`crates/taplo-lsp/src/diagnostics.rs`,
-`crates/taplo-cli/src/{lib,args}.rs`, `crates/taplo-cli/src/commands/lint.rs`,
-`crates/taplo/src/dom/{mod,node}.rs`,
-`editors/vscode/package.json`, `editors/vscode/src/client.ts`.
-Issues cited: [#497](https://github.com/tamasfe/taplo/issues/497),
-[#739](https://github.com/tamasfe/taplo/issues/739),
-[#857](https://github.com/tamasfe/taplo/issues/857).
+### 6.1 What `schemars` emits, and whether it is configurable
 
-**tombi** — docs: [configuration](https://tombi-toml.github.io/tombi/docs/configuration),
-[JSON Schema](https://tombi-toml.github.io/tombi/docs/json-schema),
-[schema document directive](https://tombi-toml.github.io/tombi/docs/comment-directive/schema-document-directive),
-[differences from Taplo](https://tombi-toml.github.io/tombi/docs/reference/difference-taplo),
-[installation](https://tombi-toml.github.io/tombi/docs/installation).
-Source (`main`, `825161b60`): `crates/tombi-config/src/lib.rs`,
-`crates/tombi-schema-store/src/{store,json_schema_dialect,keyword_support}.rs`,
-`crates/tombi-uri/src/{lib,schema_uri}.rs`,
-`crates/tombi-ast-syntax/src/ast/impls/comment.rs`,
-`crates/tombi-validator/src/{match_evidence,branch_evaluation,diagnostic}.rs`,
-`crates/tombi-validator/src/validate/one_of.rs`,
-`design/json-schema-compliance-policy.md`, `editors/{vscode,zed,intellij}/`.
+`schemars` 1.2.2 (current on crates.io at survey date) defaults to
+**draft 2020-12**, with `$defs`, `const`, and `$ref` carrying sibling keywords `[E]`:
 
-**Editors** — `neovim/nvim-lspconfig` `lsp/{taplo,tombi}.lua`; `neovim/neovim`
-`runtime/lua/vim/lsp/handlers.lua`; [Zed TOML docs](https://zed.dev/docs/languages/toml),
-`zed-extensions/toml/extension.toml`, `zed-industries/extensions/extensions.toml`;
-`helix-editor/helix/languages.toml` and `book/src/languages.md`,
-`helix-term/src/application.rs`, `helix-lsp/src/client.rs`;
-`emacs-lsp/lsp-mode/clients/lsp-toml.el` and
-[lsp-toml docs](https://emacs-lsp.github.io/lsp-mode/page/lsp-toml/);
-`emacs-mirror/emacs` `lisp/progmodes/eglot.el` (`master` and `emacs-30`);
-`JetBrains/intellij-community` `plugins/toml/**` and `json/backend/**`,
-[JetBrains JSON help](https://www.jetbrains.com/help/idea/json.html).
+```json
+"mode": { "description": "Rendering mode.", "$ref": "#/$defs/RenderMode", "default": "inline" }
+```
 
-**Crates** — [`schemars` 1.2.2](https://docs.rs/schemars/1.2.2/schemars/) and its
-`GREsau/schemars` tree at `v1.2.2` / `v0.8.22` (including
-`schemars/tests/expected/*.json` and the 1.x snapshot files);
-[`jsonschema` 0.17.1](https://docs.rs/jsonschema/0.17.1/) source from crates.io;
-`url` 2.x. Local experiments: `url` parse table (§2.6), `schemars` 0.8.22 and 1.2.2
-schema generation over the same input types (§5.3), `schemars` 1.2.2 with
-`SchemaSettings::draft07()` (§5.3).
+It **is** configurable. `SchemaSettings::draft07()` emits
+`http://json-schema.org/draft-07/schema#`, `definitions`, and wraps refs as
+`"allOf": [{"$ref": …}]` so the siblings remain legal; `SchemaSettings::draft2019_09()`
+emits 2019-09 with `$defs`; `SchemaSettings::default()` is 2020-12 `[E]`.
+A fourth setting, `inline_subschemas = true`, removes `$defs` entirely `[E]`.
 
-**Specs** — [RFC 8089](https://www.rfc-editor.org/rfc/rfc8089) (the `file` URI scheme;
-cited because tombi's `file://.` form is explicitly an extension over it).
+Serde shapes, verified against the generated document `[E]`:
 
----
+| Rust | JSON Schema |
+| --- | --- |
+| unit-variant enum | `oneOf` of `{"type":"string","const":"…"}`, one per variant, each with the variant's doc as `description` — **not** an `enum` array |
+| externally tagged variant with fields | `oneOf` branch: object with one property named for the variant, `additionalProperties:false` |
+| internally tagged (`#[serde(tag="kind")]`) | `oneOf` branch: object with `kind` as `{"type":"string","const":"…"}` plus the variant's fields |
+| newtype `ConfigPath(String)` | `$defs/ConfigPath = {"description": …, "type":"string"}`, referenced by `$ref` |
+| `Option<T>` | `anyOf: [{"$ref": T}, {"type":"null"}]` |
+| `#[serde(default = …)]` | `"default": <value>` **as a sibling of `$ref`** |
+| `#[serde(deny_unknown_fields)]` | `"additionalProperties": false` |
 
-## 7. Consolidated unknowns
+### 6.2 Where it degrades in taplo
 
-| Claim | Why it is not verified |
-|---|---|
-| Windows end-to-end behaviour of an absolute `[schema] path` / `#:schema` | The `url` parse result is `verified (experiment)`; the resulting editor diagnostic is `unverified`. Experiment: on Windows, set `[schema] path = "C:\\tmp\\s.json"`, open a matching file, read the taplo output channel for ``the scheme `c` is not supported``. |
-| Whether Neovim / Helix / eglot actually deliver `evenBetterToml.*` to taplo | Mechanically implied by three source facts; `none documented` for the combination. Experiment: run the server under an LSP trace and inspect the `workspace/configuration` reply. |
-| Whether tombi's branch-evidence machinery picks the right `oneOf` branch for schemars-shaped enums | Implementation read, not run, and #857 says it sometimes does not. Experiment: `tombi lint` and `taplo lint` over a fixture using the schema `tp` will emit; diff the diagnostics. |
-| Whether `contributes.tomlValidation` accepts a local URL | Only `https://` examples appear in taplo's docs; the manifest schema is not published. `none documented`. |
-| Whether JetBrains applies a SchemaStore catalogue entry to a `.toml` file in practice | The catalogue matcher is file-name based and the TOML enabler is on by default, but no JetBrains doc names TOML as a SchemaStore consumer. `none documented`. |
-| Exact behaviour when both `.taplo.toml` and `taplo.toml` exist in one directory | `read_dir` order is filesystem-dependent (§2.3). Non-deterministic by construction; do not rely on it. |
-| Whether the disk schema cache is keyed in a way that survives a `tp` version bump | The cache key is `sha1(url)` (`cache.rs:140-144`), so a *versioned* cache path yields a new key. Not exercised here. |
+Taplo validates with the `jsonschema` crate, pinned at **0.17.1** `[S]`, with no
+draft selection of its own — the document's `$schema` is whatever `schemars` wrote.
+Completion and hover do **not** go through that crate; they walk the schema in
+taplo's own `collect_schemas` / `collect_child_schemas` `[S]`.
 
----
+**Validation is fine.** The 2020-12 document validates correctly:
+`additionalProperties:false` produces *"Additional properties are not allowed
+('nonexistent_key' was unexpected)"* and a type mismatch produces *"…is not of type
+"integer""*, both with correct spans `[E]`.
 
-## 8. Answers to the ticket's five questions
+**Value completion is fine, and better than expected.** `mode = "|"` offers
+`"inline"` and `"fullscreen"` with **each variant's own doc-comment** as the item
+documentation, identically under 2020-12 and draft-07 `[E]`. `completion.rs`
+handles `enum`, `const` and `default` explicitly, and `default_value_snippet`
+prefers `const`, then `default`, then the first `enum` value `[S]`. The
+`oneOf`-of-`const` shape that `schemars` emits for unit variants is therefore fully
+understood — this was the risk that did not materialise.
 
-**1. Which association mechanisms actually exist for TOML, and who consumes them.**
-Two families. (a) A **per-file header directive**, `#:schema <value>`, invented by taplo
-and reimplemented by tombi as an explicit compatibility feature; it is consumed by the
-*language server*, in both LSP and CLI modes, not by an editor extension. A sibling
-form, `"$schema" = "…"` as a root key, exists in both but is strictly weaker.
-(b) An **external mapping file**, which is server-specific and not shared: taplo reads
-`.taplo.toml`/`taplo.toml` with `[schema] path` and `[[rule]] include` + `[rule.schema]
-path`; tombi reads `.tombi.toml`/`tombi.toml`/`.config/tombi.toml`/`[tool.tombi]` with
-`[[schemas]] path` + `include`. On top of that, the VS Code extension adds its **own**
-`evenBetterToml.schema.associations` (regexes over document URIs) and
-`evenBetterToml.rules`, which sit at *higher* priority than the config file and are
-consumed by the extension's LSP client, not by the file.
+**The field's doc-comment and default are lost wherever `$ref` appears.**
+`collect_child_schemas` special-cases exactly one pattern:
 
-**2. Does a local filesystem path work where a URL is expected, and may it be relative?**
-Yes, in the mechanisms that matter, and both relative and absolute — with three
-qualifications. In `.taplo.toml`'s `schema.path`, in tombi's `[[schemas]] path`, and in
-both servers' `#:schema` directive, a value that fails to parse as a URL is treated as a
-path, absolutised, and converted to a `file://` URL that the loader reads from disk.
-Qualification one: **the base for a relative path differs** — taplo resolves it against
-the *workspace root* (LSP) or *cwd* (CLI), never the config file; tombi resolves it
-against the *directory containing the config file*; the directive resolves against the
-*document*. Qualification two: **the VS Code `schema.associations` setting is the
-exception** — a bare absolute path is dropped there; it needs `./relative` or a `file://`
-URL. Qualification three: **on Windows a bare absolute path is broken everywhere**,
-because the drive letter parses as a URL scheme before the path branch is ever reached.
-So the answer to the load-bearing question is: a mechanism that only accepts URLs does
-*not* foreclose the gesture, because the mechanisms accept paths — but a writer must emit
-`file:///C:/…` on Windows, and an absolute path is the only form immune to the
-base-directory divergence.
+```rust
+// Deal with the { "description": "Foo", "allOf": [{ "$ref": "Bar" }] }
+// pattern.
+```
 
-**3. Is the mapping file's location fixed, or discoverable up the tree?**
-**Discoverable up the tree, in both servers** — despite taplo's docs saying otherwise.
-taplo walks from the workspace root (LSP) or cwd (CLI) to the filesystem root; tombi
-walks from the opened file's directory (LSP) or cwd (CLI) to the filesystem root and then
-falls back to user- and system-level config. **There is no mismatch with D14**: a file
-written at the repository root is found by both, from anywhere at or below it. Two
-caveats: taplo skips config discovery entirely for a detached file with no workspace
-folder, and taplo's *relative glob* resolution (not the discovery) is anchored to the
-workspace root, so a `.taplo.toml` at the repo root plus a subdirectory workspace makes
-`include = ["tp.toml"]` point at the wrong path — use `**/tp.toml`.
+— the **draft-07** shape `[S]`. The 2020-12 shape hits `ref_schema_value` first and
+`return`s, so `description` and `default` beside a `$ref` never reach the client
+`[S]`. Measured, hovering the key `log_file: ConfigPath` whose doc-comment is
+*"Where the log goes."*:
 
-**4. Is the dialect the Rust derive emits one the consumer accepts, and where does it
-degrade?**
-Only if the derive is configured for it. `schemars` 1.x defaults to **2020-12**; taplo
-supports **Draft 4/6/7 only** and silently reinterprets an unrecognised `$schema` as
-Draft 7 — no error, no warning, no diagnostic. tombi accepts 2020-12 natively. Beyond the
-dialect label, the specific degradations are: (a) **`oneOf` over enums** — taplo unions
-all branches for completion, so every variant's keys are offered at once regardless of
-which variant is present, and a failure produces a single opaque
-`"… is not valid under any of the schemas listed in the 'oneOf' keyword"` on the whole
-table rather than a pointed message; (b) **`$ref` siblings** — schemars 1.x's default
-output puts `description` and `default` next to `$ref`, and taplo discards siblings of
-`$ref`, so per-field doc comments and defaults vanish from completion; schemars 0.8 and
-schemars 1.x under `SchemaSettings::draft07()` emit the `allOf: [{$ref}]` wrapper that
-taplo explicitly handles, and the metadata survives; (c) **newtypes such as
-`ConfigPath`** — already transparent in both schemars majors, no degradation, they render
-as `{"type": "string"}` carrying the type's own doc comment; (d) **defaults** — emitted as
-the `default` keyword, the field is correctly dropped from `required`, and taplo offers
-the default as a completion item and shows it on hover, *except* in the `$ref`-sibling
-case above.
+| schema | taplo hover shows | tombi hover shows |
+| --- | --- | --- |
+| 2020-12 (`$ref` + siblings) | `"A filesystem path declared in config."` `[E]` | `"Where the log goes." … Value: String?` `[E]` |
+| draft-07 (`allOf` + siblings) | `"A filesystem path declared in config."` `[E]` | — |
+| 2020-12, `inline_subschemas` | `"Where the log goes."` `[E]` | — |
 
-**5. What does the mapping look like across the editors that matter, and does one file
-serve them all?**
-**No.** `.taplo.toml` serves VS Code (Even Better TOML), Neovim-on-taplo, Helix and Emacs
-`lsp-mode`. It serves nothing else. Zed ships no TOML language server and its docs point
-at tombi; Emacs `eglot` on `master` maps TOML to tombi; JetBrains uses neither server, has
-its own JSON Schema engine for TOML, and stores mappings in `.idea/jsonSchemas.xml`.
-Writing one file therefore covers roughly half the field; covering the servers takes two
-files (`.taplo.toml` **and** `tombi.toml`) and covering JetBrains takes a third, in an
-XML format that is an IDE state file rather than a hand-authored one. The single artifact
-that spans both language servers — and therefore every editor that runs one at all —
-is the in-file `#:schema` header directive.
+For `mode: RenderMode`, taplo hover concatenates the branch docs and the *type's*
+doc — *"Render inline in scrollback. / Take over the alternate screen. / How the
+agent renders."* — and omits the field's *"Rendering mode."* under both dialects
+`[E]`. With `inline_subschemas` it appends *"Rendering mode."* `[E]`. Tombi shows
+*"Rendering mode."* first, then the enum values, then `Default: "inline"` — the
+`$ref` sibling default that taplo dropped `[E]`.
+
+**Key completion duplicates once per `oneOf` branch, and the dialect changes the
+count.** For a two-variant enum key under 2020-12, taplo offers **two** `mode`
+items, each documented with a *variant's* doc and neither with the field's `[E]`.
+Under draft-07 it offers **three** — the two variants plus one merged item carrying
+the field's doc `[E]`, because the `allOf` special case fires. Tombi offers **one**
+item, documented with the field's doc `[E]`.
+
+**`oneOf` diagnostics are the worst part.** `[provider] kind = "wrong"` yields five
+taplo errors, all reading *"{"kind":"wrong","model":"m"} is not valid under any of
+the schemas listed in the 'oneOf' keyword"*, at five different spans covering the
+table header and every key and value inside it `[E]`. The message names neither the
+offending key nor the allowed tags. Tombi, same input: two errors,
+*"the value must be const value "anthropic", but found "wrong""* and the same for
+`"openai"`, both at the value's span, plus *""base_url" is required"* `[E]`.
+
+**`inline_subschemas = true` is the fix, and it is one line.** It removes `$defs`,
+so every property is a self-contained schema and taplo has no `$ref` to bail out on
+`[E]`. Verified effects: `log_file` hover and completion both carry the key's own
+doc `[E]`; `mode` hover gains the field's sentence `[E]`; value completion is
+unchanged `[E]`; the enum key still yields two completion items, which is inherent
+to `oneOf` and not fixable from the schema side. Costs: the document grows by the
+number of reuses of each named type, and a recursive type would recurse forever
+`[X]`.
+
+**Taplo's vendor extension is not a workaround.** `x-taplo` supports
+`hidden`, `links`, `docs.main`, `docs.constValue`, `docs.defaultValue`,
+`docs.enumValues` and `initKeys` `[S]`, and `schemars` can emit it via
+`#[schemars(extend(…))]`. But it would have to be emitted *beside* the `$ref`,
+where taplo already discards siblings — so it does not recover anything that the
+plain `description` does not `[X]`.
+
+### 6.3 Where it degrades in tombi
+
+Tombi has a first-class `JsonSchemaDialect` enum parsed from `$schema`
+(`/draft-07/schema`, `/draft/2019-09/schema`, `/draft/2020-12/schema`), defaulting
+to **draft-07** when `$schema` is absent or unrecognised `[S]`. It reads both
+`$defs` and `definitions` `[S]` and carries a `keyword_support` table that can warn
+that `definitions` is superseded by `$defs` `[S]`. Against the `schemars` 2020-12
+output it lost nothing measurable in this survey `[E]`. Its one weakness found: the
+value-completion documentation for an enum shows the *type's* doc rather than the
+per-variant doc, where taplo shows the per-variant doc `[E]`.
 
 ---
 
-## 9. What this means for the `--write-editor-config` gesture
+## 7. Question 5: the artifact, per editor
 
-**Recommendation: drop it as specified.**
+Every integration surveyed is a shell around taplo-lsp or tombi-lsp, and both
+servers read their project config file. So the artifact set is **two files**, not
+one per editor.
 
-The mechanism is not the problem — an absolute local path in `.taplo.toml` genuinely
-works on Unix, and the file is discovered by an upward walk that matches D14 exactly. The
-gesture fails on four other grounds, each independently sufficient:
+### 7.1 `.taplo.toml` — repository root
 
-1. **One written file cannot serve the editors.** The gesture's premise is a single
-   glob→schema mapping. There is no such thing: `.taplo.toml` reaches four of the ten
-   editor configurations in Table B, `tombi.toml` reaches six mostly-different ones, and
-   JetBrains' native TOML support reads neither. Writing one
-   file means silently choosing a subset of users and, worse, choosing the *shrinking*
-   subset — taplo has had no release in sixteen months and no Marketplace publish in
-   twenty-one, while its two most visible former hosts (Zed, eglot) have already moved to
-   tombi. Writing all three artifacts is a maintenance surface out of all proportion to a
-   convenience gesture.
+Serves the taplo CLI, VS Code + Even Better TOML, Helix, Neovim, Emacs `lsp-mode`,
+`coc-toml`, and anything else that spawns `taplo lsp stdio`.
 
-2. **Both candidate files are shared, user-owned config, and both fail closed.** They also
-   carry formatting options, `include`/`exclude` for the whole repository, and lint rules.
-   taplo parses its config with `#[serde(deny_unknown_fields)]` and, on any parse error,
-   logs `tracing::warn!("invalid configuration file")` and falls back to `Config::default()`
-   — the user's formatting configuration silently stops applying, with the only evidence in
-   a log channel nobody reads. A merging writer for that file is a footgun; a clobbering
-   writer is worse.
+```toml
+[[rule]]
+include = ["**/.tp/config.toml"]
 
-3. **The value being written is machine-specific, and these files are committed.** The
-   materialised path is an absolute path under a versioned cache directory in the user's
-   home. Writing it into `.taplo.toml` — a file whose whole purpose is to be checked in —
-   produces a repository that is wrong for every other machine and every CI runner. It is
-   also outright broken on Windows, where a bare drive-lettered path parses as a URL with
-   scheme `c` and is rejected by the loader.
+[rule.schema]
+path = "/home/u/.cache/tp/0.1.0/schemas/config.json"
 
-4. **What is written goes stale invisibly.** The schema is cached for 60 s in memory and
-   600 s on disk, including `file://` schemas; the disk cache key is `sha1(url)`, so a
-   version bump of the cache path silently orphans the old entry; no file watcher is
-   registered for either the schema or `.taplo.toml`; and `.taplo.toml` is only re-read
-   when the editor sends `didChangeConfiguration`. A user who runs the gesture and sees
-   nothing happen has no way to distinguish "it didn't work" from "restart your editor",
-   and `tp` cannot tell them which.
+[[rule]]
+include = ["**/.tp/keybindings.toml"]
 
-**What should exist instead is not a written file but printed text.** `tp config schema`
-already knows the materialised path; the honest gesture is to *show* the three-line
-snippet for each supported consumer and let the user place it, because only the user
-knows which server they run and whether their `.taplo.toml` is committed. That costs one
-`println!` and carries none of the four risks above.
+[rule.schema]
+path = "/home/u/.cache/tp/0.1.0/schemas/keybindings.json"
 
-**If the team insists on writing something anyway**, the one artifact with a defensible
-claim to portability is the `#:schema` header directive — it is honoured by both servers,
-at the highest non-manual priority, needs no discovery, needs no second file, and works in
-detached/no-folder editing where `.taplo.toml` is not even looked for. But it must point
-at a **project-relative** path, not the cache path, because it lives inside the user's
-committed `tp.toml`; and materialising a project-relative copy is a different artifact from
-the one D8 specified. That is a change to D8, so it is out of scope here and is recorded
-only so the option is not lost.
+[[rule]]
+include = ["**/.tp/themes/*.toml"]
 
-**One finding from this ticket does bear directly on D8 and should be carried back**,
-because it costs nothing and is strictly an improvement: **generate the schemas with
-`SchemaSettings::draft07()`, not the schemars 1.x default.** Measured here, that single
-change emits `$schema: "http://json-schema.org/draft-07/schema#"` — the exact string
-`jsonschema` 0.17.1 recognises, trailing `#` included — and restores the
-`allOf: [{"$ref": …}]` wrapper that taplo is written to handle, which is what preserves
-per-field doc comments and defaults in completion. tombi accepts draft-07 as its own
-default dialect, so nothing is lost on that side. The default 2020-12 output is silently
-downgraded by taplo *and* loses metadata; the draft-07 output is understood correctly by
-both.
+[rule.schema]
+path = "/home/u/.cache/tp/0.1.0/schemas/theme.json"
+```
+
+Verified end-to-end under both the CLI and the LSP `[E]`. Note it is a **shared,
+user-owned file** — taplo's formatter settings live in it too — so the gesture must
+merge rather than overwrite `[X]`.
+
+### 7.2 `tombi.toml` — repository root
+
+Serves the tombi CLI, Zed, VS Code + Tombi, JetBrains + Tombi, Helix, Neovim.
+
+```toml
+[[schemas]]
+path = "/home/u/.cache/tp/0.1.0/schemas/config.json"
+include = ["**/.tp/config.toml"]
+
+[[schemas]]
+path = "/home/u/.cache/tp/0.1.0/schemas/keybindings.json"
+include = ["**/.tp/keybindings.toml"]
+
+[[schemas]]
+path = "/home/u/.cache/tp/0.1.0/schemas/theme.json"
+include = ["**/.tp/themes/*.toml"]
+```
+
+Verified end-to-end under the CLI and the LSP `[E]`.
+
+### 7.3 What each editor actually needs (and does not)
+
+| Editor | Server | Needs its own artifact? |
+| --- | --- | --- |
+| VS Code + Even Better TOML `[D]` | taplo-lsp, bundled (`evenBetterToml.taplo.bundled` defaults `true`) `[D]` | **No** — the LSP reads `.taplo.toml` from the workspace root, `evenBetterToml.taplo.configFile.enabled` defaults `true` `[S][E]` |
+| VS Code + Tombi `[S]` | tombi-lsp | **No** — extension exposes no schema settings at all `[S]` |
+| Zed `[D]` | tombi-lsp, via the Tombi extension (`extension.toml` id `tombi`, v0.2.4) `[S]` | **No** |
+| Helix `[S]` | *both*: `language-servers = [ "taplo", "tombi" ]` for TOML `[S]` | **No** |
+| Neovim (`nvim-lspconfig`) `[S]` | either; `taplo` root markers `.taplo.toml`, `taplo.toml`, `.git`; `tombi` root markers `tombi.toml`, `pyproject.toml`, `.git` `[S]` | **No** |
+| JetBrains | Tombi plugin (id `tombi`, v0.2.0, in-tree) `[S]`. Natively there is **no LSP**; the umbrella ticket [IJPL-104165](https://youtrack.jetbrains.com/issue/IJPL-104165) is open since 2021-11-08 `[I]`, but the companion catalogue reports a shipped `TomlJsonSchemaEnabler` plus registry key `org.toml.json.schema` — see §7.4 | **Yes** natively (`.idea/jsonSchemas.xml`); **no** with the Tombi plugin |
+| Emacs `lsp-mode` | taplo, via `lsp-toml` `[?]` | assumed no `[?]` |
+| Emacs `eglot` (Emacs 31 / `master`) | tombi — `((toml-ts-mode conf-toml-mode) . ("tombi" "lsp"))`, per the companion catalogue `[?]` | **No** `[X]` |
+
+**If an editor-settings artifact is written anyway**, these are the literal shapes.
+
+VS Code — `.vscode/settings.json`. Regex keys; the value **must** be an absolute
+`file://` URI (§4.2):
+
+```json
+{
+  "evenBetterToml.schema.associations": {
+    ".*/\\.tp/config\\.toml$": "file:///home/u/.cache/tp/0.1.0/schemas/config.json"
+  }
+}
+```
+
+Helix — `.helix/languages.toml`. Helix sends `[language-server.NAME.config]` both
+as `initializationOptions` and as a `workspace/didChangeConfiguration` after
+`initialized` `[S]`, and taplo's `configuration_change` handler feeds the settings
+object in **un-nested** `[S]`. Verified by driving taplo with `workspace/configuration`
+answered `null` and only the notification carrying the settings — associations
+applied `[E]`:
+
+```toml
+[language-server.taplo.config.schema.associations]
+".*/\\.tp/config\\.toml$" = "file:///home/u/.cache/tp/0.1.0/schemas/config.json"
+```
+
+Neovim — `vim.lsp.config`. Neovim answers `workspace/configuration` by looking up
+the requested section inside `client.settings` `[S]`, and taplo asks for section
+`evenBetterToml` `[S]`, so the nested form is the correct one:
+
+```lua
+vim.lsp.config('taplo', {
+  settings = { evenBetterToml = { schema = { associations = {
+    ['.*/%.tp/config%.toml$'] = 'file:///home/u/.cache/tp/0.1.0/schemas/config.json',
+  } } } },
+})
+```
+
+(Neovim also sends `didChangeConfiguration` with the same table on init `[S]`, so
+the un-nested form happens to work too `[X]`. Prefer the nested one.)
+
+All three are strictly worse than `.taplo.toml`: they hard-code a machine-specific
+absolute path into a file that is usually committed, and they must be written three
+times for three editors.
+
+### 7.4 The companion catalogue on this branch, and where we disagree
+
+A second artifact, `toml-schema-association-catalogue.md`, was produced for this
+ticket in parallel. It is a documentation-and-source catalogue and it states
+plainly that **no editor was run**; every editor-dependent cell in it is marked
+`unverified`. It is worth keeping because it covers ground this note does not, and
+worth reading beside this one because the two disagree in three places.
+
+**It covers, and this note does not:**
+
+- **`.idea/jsonSchemas.xml`** as a JetBrains-native mechanism, with
+  `relativePathToSchema` + `patterns` entries, sourced to
+  `JsonSchemaMappingsProjectConfiguration.java`, and a shipped
+  `TomlJsonSchemaEnabler.kt` with registry key `org.toml.json.schema` defaulting to
+  `true`. If that reading holds, JetBrains natively supports TOML schema code
+  insight and needs a **third** artifact. This note's `[I]` marker on IJPL-104165
+  is the weaker claim; the enabler and the meta-issue can both be true at once.
+- **Emacs `eglot`** on `master` mapping TOML to `tombi`, and Emacs 30 registering
+  no TOML server at all.
+- **`schemars` 0.8.22 vs 1.2.2** differences, and a keyword-level table of what
+  `jsonschema` 0.17.1 supports per draft.
+
+**Where the two disagree:**
+
+1. **VS Code's config-file discovery.** The catalogue treats `.taplo.toml`
+   discovery as a walk. It is not, in VS Code: the bundled server is the WASM build
+   and its `findConfigFile` checks one directory (§5) `[S]`. This note's reading is
+   the narrower and, on the source, the correct one.
+2. **The Helix settings shape.** The catalogue gives
+   `[language-server.taplo.config.evenBetterToml.schema]`. This note verified the
+   **un-nested** `[language-server.taplo.config.schema.associations]` empirically,
+   through the `didChangeConfiguration` path `[E]`. Both are plausible — Helix
+   answers `workspace/configuration` by walking the section path into `config`
+   `[S]`, so the nested form should also work — but only the un-nested one has been
+   run.
+3. **Whether one file serves them all.** The catalogue answers "no" over a
+   ten-row editor table including JetBrains-native and Emacs 30. This note answers
+   "no, two" over the editors that have a language server at all. The difference is
+   scope, not fact.
+
+---
+
+## 8. The gesture's fate
+
+**`--write-editor-config` works as specified — for one of the two servers, at one
+of the two file locations D14 permits, and only if the mapping is written as a
+`.taplo.toml`/`tombi.toml` pair rather than as editor settings.** The three
+corrections are cheap; the fourth problem is not the mechanism's.
+
+What must change from the D8 wording, in order of cost:
+
+1. **Write two files, not one.** `.taplo.toml` and `tombi.toml`, both at the
+   repository root. Cost: one extra template and a merge path for each. Without
+   `tombi.toml`, Zed and JetBrains users get nothing, and Zed is the editor whose
+   own documentation now names Tombi `[D]`.
+
+2. **Write at the repository root, and use a globstar-prefixed pattern.** Not beside the `.tp/`
+   directory the mapping describes. Taplo only walks up from the editor's workspace
+   root `[S]`, so a nested mapping file is unreachable; and a *relative* `include`
+   anchored to CWD means the CLI silently no-ops from any subdirectory `[E]`.
+   In VS Code the requirement is absolute: the bundled WASM server does not walk
+   at all, so the file must be at the workspace-folder root or it is invisible
+   `[S]`. `include = ["**/.tp/config.toml"]` at the root covers both the root and the
+   nested case. Cost: none.
+
+3. **Use `path`, never `url`, and never editor settings.** `schema.path` is the
+   only taplo key that takes a filesystem path `[S][E]`; `schema.url` rejects one
+   and discards the entire config file when it sees one `[E]`;
+   `evenBetterToml.schema.associations` rejects one silently and has no working
+   relative form `[E]`. Cost: none — it is a field name.
+
+4. **Set `inline_subschemas = true` on the `schemars` generator.** Otherwise every
+   key whose type is an enum or a `ConfigPath` loses the doc-comment D12 makes
+   mandatory, in the editor most `tp` users will have `[E]`. Cost: a larger schema
+   file and a build-time prohibition on recursive config types — which the closed
+   axis enum of D11 already effectively imposes.
+
+The one problem the gesture cannot fix is **staleness**. #11-D6 version-keys the
+cache `[D]`, so the written mapping names `…/tp/<version>/schemas/config.json` and
+dies at the next upgrade, leaving a stale line in a file `tp` promised not to touch
+uninvited. Three options, none free:
+
+- **Re-run the gesture on upgrade** — but `tp` must then either remember which
+  repositories it wrote into, or rewrite on every startup, which is the uninvited
+  write D8 forbids.
+- **Materialise the schemas to an unversioned path** (`…/tp/schemas/`) beside the
+  versioned docs, and point the mapping there. Cost: a second materialisation rule,
+  and two `tp` versions on one machine fight over the file. This is the cheapest
+  of the three and the one this note recommends.
+- **Materialise into the project** (`.tp/schemas/`) and write relative paths. Cost:
+  generated files in the user's repository — a bigger violation than the mapping
+  file itself.
+
+**Recommendation: keep the gesture, with the four corrections and the unversioned
+schema path.** It is not worth dropping: the mechanism is real, local absolute
+paths do work in the two config-file formats, and the whole thing is ~60 lines of
+TOML templating. But it should be honest about scope in its output — it writes two
+files at the repository root, it merges rather than overwrites, and it tells the
+user which of the two servers it just configured.
+
+---
+
+## 9. What could not be verified
+
+| Item | Status |
+| --- | --- |
+| Emacs `lsp-mode` / `lsp-toml` schema-association surface | `[?]` Confirmed only that it wraps taplo, from a secondary index page; the `lsp-toml` source was not read. The companion catalogue reports `eglot` on `master` maps TOML to `tombi`; not independently checked here |
+| The WASM taplo build, run | `[?]` Every `[E]` LSP result in this note is from the **native** `taplo lsp stdio`. The WASM build shares `taplo-lsp` and `taplo-common`, so §4.2, §6 and §7 transfer by construction `[X]`; only §5's discovery differs, and that difference was read from source, not run |
+| JetBrains native TOML schema code insight | `[?]` This note found only IJPL-104165 (open). The companion catalogue reports a shipped `TomlJsonSchemaEnabler.kt` and a `.idea/jsonSchemas.xml` mapping store; neither was verified here, and no JetBrains IDE was run |
+| `coc-toml` | `[?]` Its README says it uses taplo as the LSP engine; not read or run |
+| tombi-lsp honouring the `#:schema` directive | `[X]` The directive is handled in tombi's shared `comment-directive` crate and was verified through the CLI; not re-verified through the LSP |
+| taplo-lsp honouring the `$schema` root key | `[X]` Verified via the CLI; the code path (`add_from_document`) is shared, but not re-run under the server |
+| Windows behaviour of `format!("file://{path}")` end-to-end | `[X]` The `Url::parse` half is `[E]`; the `to_file_path()` half is inferred from the URL spec's drive-letter rule. No Windows machine was available |
+| JetBrains native TOML JSON-schema support | `[I]` IJPL-104165 is "In progress", unresolved, created 2021-11-08. Whether a partial implementation ships behind a registry flag today was not established |
+| Whether any client sends a workspace-folder URI *with* a trailing slash | `[?]` If one did, the §4.2 off-by-one would not occur for that client. Not checked beyond the servers' own behaviour |
+| An upstream taplo issue tracking the §4.2 off-by-one | `[?]` None found; the nearest are #620 / #770 / #773, which are `$ref`-resolution failures against schemastore, not this |
+| Even Better TOML's maintenance status | `[I]` v0.21.2, last marketplace update **2024-12-20**, 4.79M installs. The taplo repository is still committed to (HEAD 2026-07-28) but the last release is 0.10.0, 2025-05-23. Read as risk, not as abandonment |
+
+---
+
+## 10. Primary sources
+
+**Taplo**
+
+- Source, `08f343be` — https://github.com/tamasfe/taplo
+  - `crates/taplo-common/src/schema/associations.rs` (priority ladder, directive and `$schema` resolution, glob matching)
+  - `crates/taplo-common/src/config.rs` (`CONFIG_FILE_NAMES`, `SchemaOptions`, `Options::prepare`, `make_absolute`)
+  - `crates/taplo-common/src/schema/mod.rs` (`jsonschema` 0.17.1, `collect_schemas`, `collect_child_schemas`, `reference_url`, `fetch_external`)
+  - `crates/taplo-common/src/schema/ext.rs` (`x-taplo`)
+  - `crates/taplo-common/src/environment/native.rs` (`find_config_file`)
+  - `crates/taplo-lsp/src/world.rs`, `src/config.rs`, `src/handlers/configuration.rs`, `src/handlers/schema.rs`, `src/handlers/completion.rs`
+  - `crates/taplo/src/dom/mod.rs` (directive lexer)
+  - `editors/vscode/package.json` (`evenBetterToml.*` settings), `editors/vscode/src/client.ts` (bundled server selection), `editors/vscode/src/server.ts` (the JS `findConfigFile` that does not walk)
+  - `crates/taplo-wasm/src/environment.rs` (`Environment` delegated to JS)
+- Documentation — https://taplo.tamasfe.dev/configuration/directives.html and https://taplo.tamasfe.dev/configuration/file.html
+- Issues — [#620](https://github.com/tamasfe/taplo/issues/620), [#770](https://github.com/tamasfe/taplo/issues/770), [#773](https://github.com/tamasfe/taplo/issues/773)
+
+**Tombi**
+
+- Source, `825161b6` — https://github.com/tombi-toml/tombi
+  - `crates/tombi-config/src/schema.rs` (`[[schemas]]`, `RootSchema`), `src/lib.rs` (config file names), `src/level.rs` (`config_base_dir`)
+  - `crates/tombi-schema-store/src/store.rs` (`load_config`, `load_config_schemas`), `src/json_schema_dialect.rs`, `src/keyword_support.rs`
+  - `crates/tombi-lsp/src/config_manager.rs` (per-document config discovery)
+  - `rust/serde_tombi/src/config.rs` (`load_with_path_and_level` — the walk)
+  - `editors/vscode/package.json`, `editors/zed/extension.toml`, `editors/intellij/gradle.properties`
+- Documentation — https://tombi-toml.github.io/tombi/docs/json-schema/
+
+**Editors**
+
+- Zed docs — https://raw.githubusercontent.com/zed-industries/zed/main/docs/src/languages/toml.md
+- Helix `languages.toml` — https://raw.githubusercontent.com/helix-editor/helix/master/languages.toml
+- Helix `helix-term/src/application.rs`, `helix-lsp/src/client.rs` (config delivery)
+- Helix docs — https://docs.helix-editor.com/languages.html
+- `nvim-lspconfig` — `lsp/taplo.lua`, `lsp/tombi.lua`
+- Neovim — `runtime/lua/vim/lsp/handlers.lua` (`workspace/configuration`), `runtime/lua/vim/lsp/client.lua` (`didChangeConfiguration` on init)
+- VS Marketplace gallery API for `tamasfe.even-better-toml`
+- JetBrains YouTrack — https://youtrack.jetbrains.com/issue/IJPL-104165
+
+**Schema generation**
+
+- `schemars` 1.2.2 from crates.io; `schemars::generate::SchemaSettings::{draft07, draft2019_09, default}`, `inline_subschemas`
+- `url` crate `Url::parse` / `Url::join` / `Url::to_file_path` behaviour, exercised directly
